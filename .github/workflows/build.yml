@@ -20,6 +20,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper
+
       - name: Restore Gradle Cache
         uses: actions/cache/restore@v4
         with:
