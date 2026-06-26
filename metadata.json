@@ -1,0 +1,6 @@
+{
+  "name": "APK System Editor",
+  "description": "An MT Manager style APK and system file editor for Android. Supports dual-panel view, DEX/XML/ARSC parsing/viewing, root access check, and file text comparison with search.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
