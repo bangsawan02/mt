@@ -23,6 +23,15 @@ jobs:
       - name: Generate Gradle Wrapper
         run: gradle wrapper
 
+      - name: Restore Keystore and Environment Files
+        run: |
+          if [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          fi
+
       - name: Restore Gradle Cache
         uses: actions/cache/restore@v4
         with:
