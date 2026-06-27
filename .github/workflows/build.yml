@@ -27,17 +27,8 @@ jobs:
         run: |
           echo "Checking repository files..."
           ls -la
-          if [ -f debug.keystore.base64 ]; then
-            echo "Found debug.keystore.base64, decoding to debug.keystore..."
-            base64 --decode debug.keystore.base64 > debug.keystore
-            if [ -f debug.keystore ]; then
-              echo "Successfully decoded debug.keystore. Size: $(wc -c < debug.keystore) bytes"
-            else
-              echo "Error: debug.keystore file was not created!"
-            fi
-          else
-            echo "Error: debug.keystore.base64 not found in the root directory!"
-          fi
+          echo "Generating manual debug.keystore..."
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           if [ -f .env.example ]; then
             cp .env.example .env
             echo ".env restored from .env.example"
