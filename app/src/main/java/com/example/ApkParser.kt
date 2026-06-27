@@ -434,16 +434,6 @@ object ApkParser {
         return null
     }
 
-    private fun isSignatureFile(name: String): Boolean {
-        val upperName = name.uppercase()
-        if (!upperName.startsWith("META-INF/")) return false
-        return upperName.endsWith("/MANIFEST.MF") ||
-               upperName.endsWith(".SF") ||
-               upperName.endsWith(".RSA") ||
-               upperName.endsWith(".DSA") ||
-               upperName.endsWith(".EC")
-    }
-
     private fun asn1(tag: Byte, vararg elements: ByteArray): ByteArray {
         val content = elements.fold(byteArrayOf()) { acc, bytes -> acc + bytes }
         return wrapTag(tag, content)
@@ -501,34 +491,71 @@ object ApkParser {
     fun signApkWithEntries(apkFile: File, modifiedEntries: Map<String, ByteArray> = emptyMap()) {
         val tempFile = File(apkFile.parentFile, apkFile.name + ".tmp")
         try {
-            val bytes = apkFile.readBytes()
-            val bais = ByteArrayInputStream(bytes)
-            val zis = ZipInputStream(bais)
+            val md = MessageDigest.getInstance("SHA-256")
             
-            val tempFos = FileOutputStream(tempFile)
-            val zos = ZipOutputStream(tempFos)
+            // First Pass: Scan the original APK, compute SHA-256 digests of all entries, and collect metadata
+            val entryDigests = java.util.LinkedHashMap<String, String>()
+            val entriesMeta = java.util.LinkedHashMap<String, ZipEntryInfo>()
             
-            val entriesData = java.util.LinkedHashMap<String, ByteArray>()
-            
+            var fis = java.io.FileInputStream(apkFile)
+            var zis = ZipInputStream(fis)
             var entry = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory && !isSignatureFile(entry.name)) {
-                    val out = ByteArrayOutputStream()
-                    val buf = ByteArray(4096)
-                    var len = zis.read(buf)
-                    while (len != -1) {
-                        out.write(buf, 0, len)
-                        len = zis.read(buf)
+                    val name = entry.name
+                    val dataBytes = modifiedEntries[name]
+                    
+                    val (digestStr, size, crc) = if (dataBytes != null) {
+                        // Use modified data
+                        md.reset()
+                        val digest = md.digest(dataBytes)
+                        val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
+                        Triple(b64, dataBytes.size.toLong(), calculateCrc32(dataBytes))
+                    } else {
+                        // Compute digest of original data by streaming it
+                        md.reset()
+                        val crcCalculator = java.util.zip.CRC32()
+                        val buf = ByteArray(4096)
+                        var totalLen = 0L
+                        var len = zis.read(buf)
+                        while (len != -1) {
+                            md.update(buf, 0, len)
+                            crcCalculator.update(buf, 0, len)
+                            totalLen += len
+                            len = zis.read(buf)
+                        }
+                        val digest = md.digest()
+                        val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
+                        Triple(b64, totalLen, crcCalculator.value)
                     }
-                    entriesData[entry.name] = out.toByteArray()
+                    
+                    entryDigests[name] = digestStr
+                    entriesMeta[name] = ZipEntryInfo(
+                        name = name,
+                        method = entry.method,
+                        size = size,
+                        crc = crc
+                    )
                 }
                 entry = zis.nextEntry
             }
             zis.close()
+            fis.close()
             
-            // Apply modified entries
+            // Add any newly added modified entries that didn't exist in original APK
             for ((mName, mBytes) in modifiedEntries) {
-                entriesData[mName] = mBytes
+                if (!entryDigests.containsKey(mName)) {
+                    md.reset()
+                    val digest = md.digest(mBytes)
+                    val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
+                    entryDigests[mName] = b64
+                    entriesMeta[mName] = ZipEntryInfo(
+                        name = mName,
+                        method = ZipEntry.DEFLATED,
+                        size = mBytes.size.toLong(),
+                        crc = calculateCrc32(mBytes)
+                    )
+                }
             }
             
             // Build Manifest
@@ -536,23 +563,16 @@ object ApkParser {
             manifestSb.append("Manifest-Version: 1.0\r\n")
             manifestSb.append("Created-By: 1.0 (Android)\r\n\r\n")
             
-            val md = MessageDigest.getInstance("SHA-256")
             val entryBlocks = java.util.LinkedHashMap<String, ByteArray>()
-            
-            for ((name, data) in entriesData) {
-                md.reset()
-                val digest = md.digest(data)
-                val base64Digest = Base64.encodeToString(digest, Base64.NO_WRAP)
-                
+            for ((name, digestStr) in entryDigests) {
                 val blockSb = StringBuilder()
                 blockSb.append("Name: $name\r\n")
-                blockSb.append("SHA-256-Digest: $base64Digest\r\n\r\n")
+                blockSb.append("SHA-256-Digest: $digestStr\r\n\r\n")
                 
                 val blockBytes = blockSb.toString().toByteArray(Charsets.UTF_8)
                 entryBlocks[name] = blockBytes
                 manifestSb.append(blockSb)
             }
-            
             val manifestBytes = manifestSb.toString().toByteArray(Charsets.UTF_8)
             
             // Build SF (Signature File)
@@ -569,14 +589,12 @@ object ApkParser {
                 md.reset()
                 val blockDigest = md.digest(blockBytes)
                 val base64BlockDigest = Base64.encodeToString(blockDigest, Base64.NO_WRAP)
-                
                 sfSb.append("Name: $name\r\n")
                 sfSb.append("SHA-256-Digest: $base64BlockDigest\r\n\r\n")
             }
-            
             val sfBytes = sfSb.toString().toByteArray(Charsets.UTF_8)
             
-            // Generate standard dynamic signature key and certificate
+            // Signature generation (RSA and PKCS7 block)
             val keyGen = KeyPairGenerator.getInstance("RSA")
             keyGen.initialize(2048)
             val keyPair = keyGen.generateKeyPair()
@@ -611,7 +629,6 @@ object ApkParser {
             
             val certificateBytes = asn1(0x30, tbsCert, sigAlg, signatureBitString)
             
-            // Sign the SF file and wrap as PKCS7 block
             val rsaSigner = Signature.getInstance("SHA256withRSA")
             rsaSigner.initSign(keyPair.private)
             rsaSigner.update(sfBytes)
@@ -643,15 +660,56 @@ object ApkParser {
                 wrapTag(0xA0.toByte(), signedData)
             )
             
-            // Write normal files
-            for ((name, data) in entriesData) {
-                val zEntry = ZipEntry(name)
-                zos.putNextEntry(zEntry)
-                zos.write(data)
-                zos.closeEntry()
+            // Second Pass: Write entries to temp output APK
+            val tempFos = FileOutputStream(tempFile)
+            val zos = ZipOutputStream(tempFos)
+            
+            fis = java.io.FileInputStream(apkFile)
+            zis = ZipInputStream(fis)
+            entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory && !isSignatureFile(entry.name)) {
+                    val name = entry.name
+                    val meta = entriesMeta[name] ?: ZipEntryInfo(name, entry.method, entry.size, entry.crc)
+                    
+                    val zEntry = ZipEntry(name)
+                    zEntry.method = meta.method
+                    if (meta.method == ZipEntry.STORED) {
+                        zEntry.size = meta.size
+                        zEntry.compressedSize = meta.size
+                        zEntry.crc = meta.crc
+                    }
+                    zos.putNextEntry(zEntry)
+                    
+                    val mBytes = modifiedEntries[name]
+                    if (mBytes != null) {
+                        zos.write(mBytes)
+                    } else {
+                        val buf = ByteArray(4096)
+                        var len = zis.read(buf)
+                        while (len != -1) {
+                            zos.write(buf, 0, len)
+                            len = zis.read(buf)
+                        }
+                    }
+                    zos.closeEntry()
+                }
+                entry = zis.nextEntry
+            }
+            zis.close()
+            fis.close()
+            
+            // Add any newly added modified entries that didn't exist in original APK
+            for ((mName, mBytes) in modifiedEntries) {
+                if (!entriesMeta.containsKey(mName)) {
+                    val zEntry = ZipEntry(mName)
+                    zos.putNextEntry(zEntry)
+                    zos.write(mBytes)
+                    zos.closeEntry()
+                }
             }
             
-            // Write signatures
+            // Write signature files
             val manifestEntry = ZipEntry("META-INF/MANIFEST.MF")
             zos.putNextEntry(manifestEntry)
             zos.write(manifestBytes)
@@ -680,46 +738,27 @@ object ApkParser {
         }
     }
     
-    fun parseDexClasses(bytes: ByteArray): List<String> {
+    private fun calculateCrc32(bytes: ByteArray): Long {
+        val crc = java.util.zip.CRC32()
+        crc.update(bytes)
+        return crc.value
+    }
+    
+    private fun isSignatureFile(name: String): Boolean {
+        val upperName = name.uppercase()
+        if (!upperName.startsWith("META-INF/")) return false
+        val fileName = name.substringAfterLast('/')
+        val ext = fileName.substringAfterLast('.', "").uppercase()
+        return fileName == "MANIFEST.MF" || ext == "SF" || ext == "RSA" || ext == "DSA" || ext == "EC"
+    }
+
+    fun parseDexClasses(bytes: ByteArray): List<DexClass> {
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         if (bytes.size < 0x70) return emptyList()
-        // Read string IDs
-        buffer.position(0x38)
-        val stringIdsSize = buffer.int
-        val stringIdsOff = buffer.int
-        if (stringIdsOff <= 0 || stringIdsOff >= bytes.size) return emptyList()
         
-        val stringOffsets = IntArray(stringIdsSize)
-        buffer.position(stringIdsOff)
-        for (i in 0 until stringIdsSize) {
-            stringOffsets[i] = buffer.int
-        }
-
-        // A helper to read a string by index
-        fun getString(index: Int): String {
-            if (index < 0 || index >= stringIdsSize) return ""
-            val offset = stringOffsets[index]
-            if (offset <= 0 || offset >= bytes.size) return ""
-            buffer.position(offset)
-            // Read uleb128 size
-            var result = 0
-            var shift = 0
-            var b: Byte
-            do {
-                b = buffer.get()
-                result = result or ((b.toInt() and 0x7f) shl shift)
-                shift += 7
-            } while ((b.toInt() and 0x80) != 0)
-            
-            // Read bytes until null terminator
-            val out = ByteArrayOutputStream()
-            while (true) {
-                val charByte = buffer.get()
-                if (charByte == 0.toByte()) break
-                out.write(charByte.toInt())
-            }
-            return String(out.toByteArray(), Charsets.UTF_8)
-        }
+        // Get all strings first
+        val dexStrings = parseDexStrings(bytes)
+        val stringMap = dexStrings.associateBy { it.index }
 
         // Read type IDs
         buffer.position(0x40)
@@ -733,13 +772,6 @@ object ApkParser {
             typeStringIndexes[i] = buffer.int
         }
 
-        // A helper to get type string by index
-        fun getTypeString(index: Int): String {
-            if (index < 0 || index >= typeIdsSize) return ""
-            val stringIdx = typeStringIndexes[index]
-            return getString(stringIdx)
-        }
-
         // Read Class Defs
         buffer.position(0x60)
         val classDefsSize = buffer.int
@@ -747,7 +779,7 @@ object ApkParser {
         if (classDefsOff <= 0 || classDefsOff >= bytes.size) return emptyList()
         buffer.position(classDefsOff)
 
-        val classes = mutableListOf<String>()
+        val classes = mutableListOf<DexClass>()
         for (i in 0 until classDefsSize) {
             val classIdx = buffer.int
             val accessFlags = buffer.int
@@ -758,9 +790,20 @@ object ApkParser {
             val classDataOff = buffer.int
             val staticValuesOff = buffer.int
 
-            val className = getTypeString(classIdx)
-            if (className.isNotEmpty()) {
-                classes.add(className)
+            if (classIdx >= 0 && classIdx < typeIdsSize) {
+                val stringIdx = typeStringIndexes[classIdx]
+                val dexStr = stringMap[stringIdx]
+                if (dexStr != null) {
+                    classes.add(
+                        DexClass(
+                            name = dexStr.value,
+                            typeIdx = classIdx,
+                            stringIndex = stringIdx,
+                            stringOffset = dexStr.offset,
+                            byteLength = dexStr.byteLength
+                        )
+                    )
+                }
             }
         }
         return classes
@@ -816,14 +859,32 @@ object ApkParser {
     fun writeDexStringInPlace(bytes: ByteArray, dexString: DexString, newValue: String): ByteArray {
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val offset = dexString.offset
-        buffer.position(offset)
         
-        // Skip uleb128 size
+        // Determine original ULEB128 size in bytes
+        var ulebSize = 0
         var b: Byte
+        buffer.position(offset)
         do {
             b = buffer.get()
+            ulebSize++
         } while ((b.toInt() and 0x80) != 0)
-
+        
+        // Encode the new length as a padded ULEB128 of the same size
+        val newUleb = ByteArray(ulebSize)
+        var temp = newValue.length
+        for (i in 0 until ulebSize) {
+            var valByte = temp and 0x7f
+            temp = temp ushr 7
+            if (i < ulebSize - 1) {
+                valByte = valByte or 0x80
+            }
+            newUleb[i] = valByte.toByte()
+        }
+        
+        // Write the new ULEB128 size back
+        buffer.position(offset)
+        buffer.put(newUleb)
+        
         val stringStartPos = buffer.position()
         val newBytes = newValue.toByteArray(Charsets.UTF_8)
         
@@ -863,13 +924,696 @@ object ApkParser {
 
         return bytes
     }
+
+    private fun readUleb128(buffer: ByteBuffer): Int {
+        var result = 0
+        var shift = 0
+        var b: Byte
+        do {
+            b = buffer.get()
+            result = result or ((b.toInt() and 0x7f) shl shift)
+            shift += 7
+        } while ((b.toInt() and 0x80) != 0)
+        return result
+    }
+
+    fun decompileClassMethods(bytes: ByteArray, dexClass: DexClass): List<DexMethod> {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        if (bytes.size < 0x70) return emptyList()
+
+        val strings = parseDexStrings(bytes).map { it.value }
+
+        // Read types
+        buffer.position(0x40)
+        val typeIdsSize = buffer.int
+        val typeIdsOff = buffer.int
+        val typeNames = Array(typeIdsSize) { "" }
+        if (typeIdsOff > 0 && typeIdsOff < bytes.size) {
+            val typeBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            typeBuf.position(typeIdsOff)
+            for (i in 0 until typeIdsSize) {
+                val sIdx = typeBuf.int
+                typeNames[i] = if (sIdx >= 0 && sIdx < strings.size) strings[sIdx] else ""
+            }
+        }
+
+        // Read methods
+        buffer.position(0x4c)
+        val methodIdsSize = buffer.int
+        val methodIdsOff = buffer.int
+
+        data class SimpleMethodRef(val classType: String, val name: String)
+        val methodRefs = Array(methodIdsSize) { SimpleMethodRef("", "") }
+        if (methodIdsOff > 0 && methodIdsOff < bytes.size) {
+            val methodBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            methodBuf.position(methodIdsOff)
+            for (i in 0 until methodIdsSize) {
+                val classIdx = methodBuf.short.toInt() and 0xffff
+                val protoIdx = methodBuf.short.toInt() and 0xffff
+                val nameIdx = methodBuf.int
+
+                val className = if (classIdx in typeNames.indices) typeNames[classIdx] else ""
+                val methodName = if (nameIdx in strings.indices) strings[nameIdx] else ""
+                methodRefs[i] = SimpleMethodRef(className, methodName)
+            }
+        }
+
+        // Read Class Defs
+        buffer.position(0x60)
+        val classDefsSize = buffer.int
+        val classDefsOff = buffer.int
+        if (classDefsOff <= 0 || classDefsOff >= bytes.size) return emptyList()
+
+        var classDataOff = 0
+        val classDefBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        classDefBuf.position(classDefsOff)
+        for (i in 0 until classDefsSize) {
+            val classIdx = classDefBuf.int
+            val accessFlags = classDefBuf.int
+            val superclassIdx = classDefBuf.int
+            val interfacesOff = classDefBuf.int
+            val sourceFileIdx = classDefBuf.int
+            val annotationsOff = classDefBuf.int
+            val cDataOff = classDefBuf.int
+            val staticValuesOff = classDefBuf.int
+
+            if (classIdx == dexClass.typeIdx) {
+                classDataOff = cDataOff
+                break
+            }
+        }
+
+        if (classDataOff <= 0 || classDataOff >= bytes.size) return emptyList()
+
+        val cDataBuf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        cDataBuf.position(classDataOff)
+
+        val staticFieldsSize = readUleb128(cDataBuf)
+        val instanceFieldsSize = readUleb128(cDataBuf)
+        val directMethodsSize = readUleb128(cDataBuf)
+        val virtualMethodsSize = readUleb128(cDataBuf)
+
+        // Skip fields
+        for (i in 0 until staticFieldsSize) {
+            readUleb128(cDataBuf) // field_idx_diff
+            readUleb128(cDataBuf) // access_flags
+        }
+        for (i in 0 until instanceFieldsSize) {
+            readUleb128(cDataBuf) // field_idx_diff
+            readUleb128(cDataBuf) // access_flags
+        }
+
+        val methods = mutableListOf<DexMethod>()
+
+        // Direct methods
+        var methodIdx = 0
+        for (i in 0 until directMethodsSize) {
+            val methodIdxDiff = readUleb128(cDataBuf)
+            val accessFlags = readUleb128(cDataBuf)
+            val codeOff = readUleb128(cDataBuf)
+            methodIdx += methodIdxDiff
+
+            val mRef = if (methodIdx in methodRefs.indices) methodRefs[methodIdx] else SimpleMethodRef("", "")
+            methods.add(decompileMethod(bytes, methodIdx, mRef.name, accessFlags, codeOff, strings, typeNames))
+        }
+
+        // Virtual methods
+        methodIdx = 0
+        for (i in 0 until virtualMethodsSize) {
+            val methodIdxDiff = readUleb128(cDataBuf)
+            val accessFlags = readUleb128(cDataBuf)
+            val codeOff = readUleb128(cDataBuf)
+            methodIdx += methodIdxDiff
+
+            val mRef = if (methodIdx in methodRefs.indices) methodRefs[methodIdx] else SimpleMethodRef("", "")
+            methods.add(decompileMethod(bytes, methodIdx, mRef.name, accessFlags, codeOff, strings, typeNames))
+        }
+
+        return methods
+    }
+
+    private fun decompileMethod(
+        bytes: ByteArray,
+        methodIdx: Int,
+        name: String,
+        accessFlags: Int,
+        codeOff: Int,
+        strings: List<String>,
+        typeNames: Array<String>
+    ): DexMethod {
+        if (codeOff <= 0 || codeOff >= bytes.size) {
+            return DexMethod(
+                methodIdx = methodIdx,
+                name = name,
+                accessFlags = accessFlags,
+                codeOffset = codeOff,
+                registersSize = 0,
+                insSize = 0,
+                outsSize = 0,
+                insnsSize = 0,
+                instructionsSmali = listOf("# abstract or native method"),
+                originalInsnBytes = byteArrayOf()
+            )
+        }
+
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        buf.position(codeOff)
+        val registersSize = buf.short.toInt() and 0xffff
+        val insSize = buf.short.toInt() and 0xffff
+        val outsSize = buf.short.toInt() and 0xffff
+        val triesSize = buf.short.toInt() and 0xffff
+        val debugInfoOff = buf.int
+        val insnsSize = buf.int
+
+        val insnsBytes = ByteArray(insnsSize * 2)
+        buf.get(insnsBytes)
+
+        val instructionsSmali = decodeInstructions(insnsBytes, strings, typeNames)
+
+        return DexMethod(
+            methodIdx = methodIdx,
+            name = name,
+            accessFlags = accessFlags,
+            codeOffset = codeOff,
+            registersSize = registersSize,
+            insSize = insSize,
+            outsSize = outsSize,
+            insnsSize = insnsSize,
+            instructionsSmali = instructionsSmali,
+            originalInsnBytes = insnsBytes
+        )
+    }
+
+    private fun decodeInstructions(insnsBytes: ByteArray, strings: List<String>, typeNames: Array<String>): List<String> {
+        val list = mutableListOf<String>()
+        val len = insnsBytes.size / 2
+        var i = 0
+        while (i < len) {
+            val word1 = (insnsBytes[i * 2].toInt() and 0xff) or ((insnsBytes[i * 2 + 1].toInt() and 0xff) shl 8)
+            val opcode = word1 and 0xff
+
+            when (opcode) {
+                0x00 -> {
+                    list.add("nop")
+                    i += 1
+                }
+                0x0e -> {
+                    list.add("return-void")
+                    i += 1
+                }
+                0x0f -> {
+                    val rA = (word1 shr 8) and 0xff
+                    list.add("return v$rA")
+                    i += 1
+                }
+                0x10 -> {
+                    val rA = (word1 shr 8) and 0xff
+                    list.add("return-wide v$rA")
+                    i += 1
+                }
+                0x11 -> {
+                    val rA = (word1 shr 8) and 0xff
+                    list.add("return-object v$rA")
+                    i += 1
+                }
+                0x12 -> {
+                    val rA = (word1 shr 8) and 0xf
+                    var literal = (word1 shr 12) and 0xf
+                    if (literal > 7) literal -= 16
+                    list.add("const/4 v$rA, $literal")
+                    i += 1
+                }
+                0x13 -> {
+                    if (i + 1 < len) {
+                        val rA = (word1 shr 8) and 0xff
+                        val literalWord = (insnsBytes[(i + 1) * 2].toInt() and 0xff) or ((insnsBytes[(i + 1) * 2 + 1].toInt() and 0xff) shl 8)
+                        var literal = literalWord
+                        if (literal > 32767) literal -= 65536
+                        list.add("const/16 v$rA, $literal")
+                        i += 2
+                    } else {
+                        list.add("const/16 error")
+                        i += 1
+                    }
+                }
+                0x14 -> {
+                    if (i + 2 < len) {
+                        val rA = (word1 shr 8) and 0xff
+                        val low = (insnsBytes[(i + 1) * 2].toInt() and 0xff) or ((insnsBytes[(i + 1) * 2 + 1].toInt() and 0xff) shl 8)
+                        val high = (insnsBytes[(i + 2) * 2].toInt() and 0xff) or ((insnsBytes[(i + 2) * 2 + 1].toInt() and 0xff) shl 8)
+                        val literal = low or (high shl 16)
+                        list.add("const v$rA, $literal")
+                        i += 3
+                    } else {
+                        list.add("const error")
+                        i += 1
+                    }
+                }
+                0x1a -> {
+                    if (i + 1 < len) {
+                        val rA = (word1 shr 8) and 0xff
+                        val strIdx = (insnsBytes[(i + 1) * 2].toInt() and 0xff) or ((insnsBytes[(i + 1) * 2 + 1].toInt() and 0xff) shl 8)
+                        val strVal = if (strIdx in strings.indices) strings[strIdx] else ""
+                        val escaped = strVal.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
+                        list.add("const-string v$rA, \"$escaped\"")
+                        i += 2
+                    } else {
+                        list.add("const-string error")
+                        i += 1
+                    }
+                }
+                0x1c -> {
+                    if (i + 1 < len) {
+                        val rA = (word1 shr 8) and 0xff
+                        val typeIdx = (insnsBytes[(i + 1) * 2].toInt() and 0xff) or ((insnsBytes[(i + 1) * 2 + 1].toInt() and 0xff) shl 8)
+                        val typeVal = if (typeIdx in typeNames.indices) typeNames[typeIdx] else ""
+                        list.add("const-class v$rA, $typeVal")
+                        i += 2
+                    } else {
+                        list.add("const-class error")
+                        i += 1
+                    }
+                }
+                0x22 -> {
+                    if (i + 1 < len) {
+                        val rA = (word1 shr 8) and 0xff
+                        val typeIdx = (insnsBytes[(i + 1) * 2].toInt() and 0xff) or ((insnsBytes[(i + 1) * 2 + 1].toInt() and 0xff) shl 8)
+                        val typeVal = if (typeIdx in typeNames.indices) typeNames[typeIdx] else ""
+                        list.add("new-instance v$rA, $typeVal")
+                        i += 2
+                    } else {
+                        list.add("new-instance error")
+                        i += 1
+                    }
+                }
+                0x01 -> {
+                    val rA = (word1 shr 8) and 0xf
+                    val rB = (word1 shr 12) and 0xf
+                    list.add("move v$rA, v$rB")
+                    i += 1
+                }
+                0x07 -> {
+                    val rA = (word1 shr 8) and 0xf
+                    val rB = (word1 shr 12) and 0xf
+                    list.add("move-object v$rA, v$rB")
+                    i += 1
+                }
+                else -> {
+                    val formatName = getOpcodeMnemonic(opcode)
+                    val wordsCount = getOpcodeWordsCount(opcode)
+                    if (wordsCount > 1 && i + wordsCount <= len) {
+                        val sb = StringBuilder()
+                        sb.append(formatName)
+                        for (w in 0 until wordsCount) {
+                            val rawWord = (insnsBytes[(i + w) * 2].toInt() and 0xff) or ((insnsBytes[(i + w) * 2 + 1].toInt() and 0xff) shl 8)
+                            sb.append(String.format(" 0x%04X", rawWord))
+                        }
+                        list.add(sb.toString())
+                        i += wordsCount
+                    } else {
+                        list.add(String.format("%s 0x%04X", formatName, word1))
+                        i += 1
+                    }
+                }
+            }
+        }
+        return list
+    }
+
+    private fun getOpcodeMnemonic(opcode: Int): String {
+        return when (opcode) {
+            0x00 -> "nop"
+            0x01 -> "move"
+            0x02 -> "move/from16"
+            0x03 -> "move/16"
+            0x04 -> "move-wide"
+            0x05 -> "move-wide/from16"
+            0x06 -> "move-wide/16"
+            0x07 -> "move-object"
+            0x08 -> "move-object/from16"
+            0x09 -> "move-object/16"
+            0x0a -> "move-result"
+            0x0b -> "move-result-wide"
+            0x0c -> "move-result-object"
+            0x0d -> "move-exception"
+            0x0e -> "return-void"
+            0x0f -> "return"
+            0x10 -> "return-wide"
+            0x11 -> "return-object"
+            0x12 -> "const/4"
+            0x13 -> "const/16"
+            0x14 -> "const"
+            0x15 -> "const/high16"
+            0x16 -> "const-wide/16"
+            0x17 -> "const-wide/32"
+            0x18 -> "const-wide"
+            0x19 -> "const-wide/high16"
+            0x1a -> "const-string"
+            0x1b -> "const-string/jumbo"
+            0x1c -> "const-class"
+            0x1d -> "monitor-enter"
+            0x1e -> "monitor-exit"
+            0x1f -> "check-cast"
+            0x20 -> "instance-of"
+            0x21 -> "array-length"
+            0x22 -> "new-instance"
+            0x23 -> "new-array"
+            0x24 -> "filled-new-array"
+            0x25 -> "filled-new-array/range"
+            0x26 -> "fill-array-data"
+            0x27 -> "throw"
+            0x28 -> "goto"
+            0x29 -> "goto/16"
+            0x2a -> "goto/32"
+            0x2b -> "packed-switch"
+            0x2c -> "sparse-switch"
+            0x2d -> "cmpl-float"
+            0x2e -> "cmpg-float"
+            0x2f -> "cmpl-double"
+            0x30 -> "cmpg-double"
+            0x31 -> "cmp-long"
+            0x32 -> "if-eq"
+            0x33 -> "if-ne"
+            0x34 -> "if-lt"
+            0x35 -> "if-ge"
+            0x36 -> "if-gt"
+            0x37 -> "if-le"
+            0x38 -> "if-eqz"
+            0x39 -> "if-nez"
+            0x3a -> "if-ltz"
+            0x3b -> "if-gez"
+            0x3c -> "if-gtz"
+            0x3d -> "if-lez"
+            in 0x44..0x51 -> "array-op"
+            in 0x52..0x5f -> "field-op"
+            in 0x6e..0x72 -> "invoke-op"
+            in 0x74..0x78 -> "invoke-range-op"
+            else -> "op_" + String.format("%02X", opcode)
+        }
+    }
+
+    private fun getOpcodeWordsCount(opcode: Int): Int {
+        return when (opcode) {
+            0x00 -> 1
+            0x01 -> 1
+            0x02 -> 2
+            0x03 -> 3
+            0x04 -> 1
+            0x05 -> 2
+            0x06 -> 3
+            0x07 -> 1
+            0x08 -> 2
+            0x09 -> 3
+            0x0a -> 1
+            0x0b -> 1
+            0x0c -> 1
+            0x0d -> 1
+            0x0e -> 1
+            0x0f -> 1
+            0x10 -> 1
+            0x11 -> 1
+            0x12 -> 1
+            0x13 -> 2
+            0x14 -> 3
+            0x15 -> 2
+            0x16 -> 2
+            0x17 -> 3
+            0x18 -> 5
+            0x19 -> 2
+            0x1a -> 2
+            0x1b -> 3
+            0x1c -> 2
+            0x1d -> 1
+            0x1e -> 1
+            0x1f -> 2
+            0x20 -> 2
+            0x21 -> 1
+            0x22 -> 2
+            0x23 -> 2
+            0x24 -> 3
+            0x25 -> 3
+            0x26 -> 3
+            0x27 -> 1
+            0x28 -> 1
+            0x29 -> 2
+            0x2a -> 3
+            0x2b -> 3
+            0x2c -> 3
+            in 0x2d..0x31 -> 1
+            in 0x32..0x37 -> 2
+            in 0x38..0x3d -> 2
+            in 0x44..0x51 -> 2
+            in 0x52..0x5f -> 2
+            in 0x6e..0x72 -> 3
+            in 0x74..0x78 -> 3
+            else -> 1
+        }
+    }
+
+    fun assembleInstructions(lines: List<String>, strings: List<DexString>, typeNames: List<DexClass>): ByteArray {
+        val out = ByteArrayOutputStream()
+        val stringMap = strings.associateBy { it.value }
+        val typeMap = typeNames.associateBy { it.name }
+
+        for (lineRaw in lines) {
+            val line = lineRaw.trim()
+            if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) continue
+
+            val parts = line.split(Regex("\\s+"), 2)
+            val mnemonic = parts[0]
+            val operands = if (parts.size > 1) parts[1] else ""
+
+            when (mnemonic) {
+                "nop" -> {
+                    out.write(0x00)
+                    out.write(0x00)
+                }
+                "return-void" -> {
+                    out.write(0x0e)
+                    out.write(0x00)
+                }
+                "return" -> {
+                    val regNum = extractRegNum(operands)
+                    out.write(0x0f)
+                    out.write(regNum)
+                }
+                "return-wide" -> {
+                    val regNum = extractRegNum(operands)
+                    out.write(0x10)
+                    out.write(regNum)
+                }
+                "return-object" -> {
+                    val regNum = extractRegNum(operands)
+                    out.write(0x11)
+                    out.write(regNum)
+                }
+                "const/4" -> {
+                    val ops = operands.split(",")
+                    val regNum = extractRegNum(ops[0])
+                    var lit = ops[1].trim().toIntOrNull() ?: 0
+                    if (lit < 0) lit += 16
+                    lit = lit and 0xf
+
+                    val word = (lit shl 12) or (regNum shl 8) or 0x12
+                    out.write(word and 0xff)
+                    out.write((word shr 8) and 0xff)
+                }
+                "const/16" -> {
+                    val ops = operands.split(",")
+                    val regNum = extractRegNum(ops[0])
+                    var lit = ops[1].trim().toIntOrNull() ?: 0
+                    if (lit < 0) lit += 65536
+                    lit = lit and 0xffff
+
+                    val word1 = (regNum shl 8) or 0x13
+                    out.write(word1 and 0xff)
+                    out.write((word1 shr 8) and 0xff)
+                    out.write(lit and 0xff)
+                    out.write((lit shr 8) and 0xff)
+                }
+                "const" -> {
+                    val ops = operands.split(",")
+                    val regNum = extractRegNum(ops[0])
+                    val lit = ops[1].trim().toIntOrNull() ?: 0
+
+                    val word1 = (regNum shl 8) or 0x14
+                    out.write(word1 and 0xff)
+                    out.write((word1 shr 8) and 0xff)
+                    out.write(lit and 0xff)
+                    out.write((lit shr 8) and 0xff)
+                    out.write((lit shr 16) and 0xff)
+                    out.write((lit shr 24) and 0xff)
+                }
+                "const-string" -> {
+                    val ops = operands.split(",", limit = 2)
+                    val regNum = extractRegNum(ops[0])
+                    var strVal = ops[1].trim()
+                    if (strVal.startsWith("\"") && strVal.endsWith("\"")) {
+                        strVal = strVal.substring(1, strVal.length - 1)
+                    }
+                    strVal = strVal.replace("\\\"", "\"").replace("\\n", "\n").replace("\\r", "\r")
+
+                    val strIdx = stringMap[strVal]?.index ?: 0
+                    val word1 = (regNum shl 8) or 0x1a
+                    out.write(word1 and 0xff)
+                    out.write((word1 shr 8) and 0xff)
+                    out.write(strIdx and 0xff)
+                    out.write((strIdx shr 8) and 0xff)
+                }
+                "const-class" -> {
+                    val ops = operands.split(",")
+                    val regNum = extractRegNum(ops[0])
+                    val typeVal = ops[1].trim()
+                    val typeIdx = typeMap[typeVal]?.typeIdx ?: 0
+
+                    val word1 = (regNum shl 8) or 0x1c
+                    out.write(word1 and 0xff)
+                    out.write((word1 shr 8) and 0xff)
+                    out.write(typeIdx and 0xff)
+                    out.write((typeIdx shr 8) and 0xff)
+                }
+                "new-instance" -> {
+                    val ops = operands.split(",")
+                    val regNum = extractRegNum(ops[0])
+                    val typeVal = ops[1].trim()
+                    val typeIdx = typeMap[typeVal]?.typeIdx ?: 0
+
+                    val word1 = (regNum shl 8) or 0x22
+                    out.write(word1 and 0xff)
+                    out.write((word1 shr 8) and 0xff)
+                    out.write(typeIdx and 0xff)
+                    out.write((typeIdx shr 8) and 0xff)
+                }
+                "move" -> {
+                    val ops = operands.split(",")
+                    val rA = extractRegNum(ops[0])
+                    val rB = extractRegNum(ops[1])
+                    val word = (rB shl 12) or (rA shl 8) or 0x01
+                    out.write(word and 0xff)
+                    out.write((word shr 8) and 0xff)
+                }
+                "move-object" -> {
+                    val ops = operands.split(",")
+                    val rA = extractRegNum(ops[0])
+                    val rB = extractRegNum(ops[1])
+                    val word = (rB shl 12) or (rA shl 8) or 0x07
+                    out.write(word and 0xff)
+                    out.write((word shr 8) and 0xff)
+                }
+                else -> {
+                    if (mnemonic.startsWith("op_") || mnemonic.endsWith("-op") || mnemonic.endsWith("-range-op")) {
+                        val opsList = operands.split(Regex("\\s+"))
+                        for (op in opsList) {
+                            val cleanOp = op.trim()
+                            if (cleanOp.startsWith("0x") || cleanOp.startsWith("0X")) {
+                                val value = cleanOp.substring(2).toInt(16)
+                                out.write(value and 0xff)
+                                out.write((value shr 8) and 0xff)
+                            }
+                        }
+                    } else {
+                        val opsList = line.split(Regex("\\s+"))
+                        for (op in opsList) {
+                            val cleanOp = op.trim()
+                            if (cleanOp.startsWith("0x") || cleanOp.startsWith("0X")) {
+                                val value = cleanOp.substring(2).toInt(16)
+                                out.write(value and 0xff)
+                                out.write((value shr 8) and 0xff)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return out.toByteArray()
+    }
+
+    private fun extractRegNum(operand: String): Int {
+        val clean = operand.replace("v", "").replace("r", "").trim()
+        return clean.toIntOrNull() ?: 0
+    }
+
+    fun writeDexMethodBytecode(
+        bytes: ByteArray,
+        dexMethod: DexMethod,
+        newBytecode: ByteArray
+    ): ByteArray {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+
+        val codeOff = dexMethod.codeOffset
+        if (codeOff <= 0 || codeOff >= bytes.size) return bytes
+
+        buffer.position(codeOff + 12)
+        val originalInsnsSize = buffer.int
+        val originalByteLength = originalInsnsSize * 2
+
+        val newInsnsSize = newBytecode.size / 2
+
+        buffer.position(codeOff + 12)
+        buffer.putInt(newInsnsSize)
+
+        buffer.put(newBytecode)
+
+        val remaining = originalByteLength - newBytecode.size
+        if (remaining > 0) {
+            for (i in 0 until remaining) {
+                buffer.put(0x00.toByte())
+            }
+        }
+
+        val digest = MessageDigest.getInstance("SHA-1")
+        digest.update(bytes, 32, bytes.size - 32)
+        val sha1 = digest.digest()
+
+        System.arraycopy(sha1, 0, bytes, 12, 20)
+
+        val adler = java.util.zip.Adler32()
+        adler.update(bytes, 12, bytes.size - 12)
+        val checksum = adler.value.toInt()
+
+        bytes[8] = (checksum and 0xFF).toByte()
+        bytes[9] = ((checksum shr 8) and 0xFF).toByte()
+        bytes[10] = ((checksum shr 16) and 0xFF).toByte()
+        bytes[11] = ((checksum shr 24) and 0xFF).toByte()
+
+        return bytes
+    }
 }
+
+
+data class ZipEntryInfo(
+    val name: String,
+    val method: Int,
+    val size: Long,
+    val crc: Long
+)
 
 data class DexString(
     val index: Int,
     val offset: Int,
     val value: String,
     val byteLength: Int
+)
+
+data class DexClass(
+    val name: String,
+    val typeIdx: Int,
+    val stringIndex: Int,
+    val stringOffset: Int,
+    val byteLength: Int
+)
+
+data class DexMethod(
+    val methodIdx: Int,
+    val name: String,
+    val accessFlags: Int,
+    val codeOffset: Int,
+    val registersSize: Int,
+    val insSize: Int,
+    val outsSize: Int,
+    val insnsSize: Int,
+    val instructionsSmali: List<String>,
+    val originalInsnBytes: ByteArray
 )
 
 data class ApkEntry(

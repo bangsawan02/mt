@@ -99,8 +99,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _dexStrings = MutableStateFlow<List<DexString>>(emptyList())
     val dexStrings: StateFlow<List<DexString>> = _dexStrings.asStateFlow()
 
-    private val _dexClasses = MutableStateFlow<List<String>>(emptyList())
-    val dexClasses: StateFlow<List<String>> = _dexClasses.asStateFlow()
+    private val _dexClasses = MutableStateFlow<List<DexClass>>(emptyList())
+    val dexClasses: StateFlow<List<DexClass>> = _dexClasses.asStateFlow()
+
+    private val _dexMethods = MutableStateFlow<List<DexMethod>>(emptyList())
+    val dexMethods: StateFlow<List<DexMethod>> = _dexMethods.asStateFlow()
 
     init {
         // Initialize with default paths
@@ -572,6 +575,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _selectedApkEntry.value = null
         _dexStrings.value = emptyList()
         _dexClasses.value = emptyList()
+        _dexMethods.value = emptyList()
     }
 
     fun saveDexString(apkPath: String, entryName: String, dexString: DexString, newValue: String) {
@@ -603,6 +607,78 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 withContext(Dispatchers.Main) {
                     val context = getApplication<Application>()
                     android.widget.Toast.makeText(context, "Failed to update DEX string: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun saveDexClass(apkPath: String, entryName: String, dexClass: DexClass, newValue: String) {
+        val dexString = DexString(
+            index = dexClass.stringIndex,
+            offset = dexClass.stringOffset,
+            value = dexClass.name,
+            byteLength = dexClass.byteLength
+        )
+        saveDexString(apkPath, entryName, dexString, newValue)
+    }
+
+    fun loadClassMethods(apkPath: String, entryName: String, dexClass: DexClass) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apkBytes = File(apkPath).readBytes()
+                val dexBytes = ApkParser.extractEntryBytes(apkBytes, entryName) ?: throw Exception("Could not read $entryName")
+                val methods = ApkParser.decompileClassMethods(dexBytes, dexClass)
+                withContext(Dispatchers.Main) {
+                    _dexMethods.value = methods
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _dexMethods.value = emptyList()
+                    val context = getApplication<Application>()
+                    android.widget.Toast.makeText(context, "Error loading methods: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun saveDexMethod(apkPath: String, entryName: String, currentClass: DexClass, dexMethod: DexMethod, smaliLines: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apkFile = File(apkPath)
+                val apkBytes = apkFile.readBytes()
+                val dexBytes = ApkParser.extractEntryBytes(apkBytes, entryName) ?: throw Exception("Could not find $entryName in APK")
+
+                // Assemble the new bytecode
+                val strings = ApkParser.parseDexStrings(dexBytes)
+                val classes = ApkParser.parseDexClasses(dexBytes)
+                val newBytecode = ApkParser.assembleInstructions(smaliLines, strings, classes)
+
+                val modifiedDexBytes = ApkParser.writeDexMethodBytecode(dexBytes, dexMethod, newBytecode)
+
+                val modified = mapOf(entryName to modifiedDexBytes)
+                ApkParser.signApkWithEntries(apkFile, modified)
+
+                val updatedDexBytes = ApkParser.extractEntryBytes(apkFile.readBytes(), entryName) ?: throw Exception("Could not reload $entryName")
+                val updatedClasses = ApkParser.parseDexClasses(updatedDexBytes)
+                val updatedStrings = ApkParser.parseDexStrings(updatedDexBytes)
+                val headerText = ApkParser.parseDexHeader(updatedDexBytes)
+
+                val updatedClass = updatedClasses.find { it.typeIdx == currentClass.typeIdx } ?: currentClass
+                val updatedMethods = ApkParser.decompileClassMethods(updatedDexBytes, updatedClass)
+
+                withContext(Dispatchers.Main) {
+                    _dexClasses.value = updatedClasses
+                    _dexStrings.value = updatedStrings
+                    _dexMethods.value = updatedMethods
+                    _apkInspectorContent.value = headerText
+
+                    val context = getApplication<Application>()
+                    android.widget.Toast.makeText(context, "DEX method bytecode updated and APK re-signed successfully!", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    val context = getApplication<Application>()
+                    android.widget.Toast.makeText(context, "Failed to update DEX method: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
         }

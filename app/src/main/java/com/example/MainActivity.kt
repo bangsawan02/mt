@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.TextStyle
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -827,6 +828,12 @@ fun ApkInspectorScreen(
             var dexSearchQuery by remember { mutableStateOf("") }
             var editingString by remember { mutableStateOf<DexString?>(null) }
             var editedStringValue by remember { mutableStateOf("") }
+            var editingClass by remember { mutableStateOf<DexClass?>(null) }
+            var editedClassValue by remember { mutableStateOf("") }
+            var classActionSelected by remember { mutableStateOf<DexClass?>(null) }
+            var activeClassForSmali by remember { mutableStateOf<DexClass?>(null) }
+            var editingMethod by remember { mutableStateOf<DexMethod?>(null) }
+            var editedSmaliValue by remember { mutableStateOf("") }
 
             Column(
                 modifier = Modifier
@@ -841,12 +848,18 @@ fun ApkInspectorScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { viewModel.closeApkEntryInspector() }) {
+                    IconButton(onClick = {
+                        if (activeClassForSmali != null) {
+                            activeClassForSmali = null
+                        } else {
+                            viewModel.closeApkEntryInspector()
+                        }
+                    }) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Back")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = title,
+                        text = if (activeClassForSmali != null) "Methods: ${activeClassForSmali!!.name.substringAfterLast("/")}" else title,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -854,8 +867,72 @@ fun ApkInspectorScreen(
                     )
                 }
 
-                // Tabs
-                TabRow(selectedTabIndex = selectedTab) {
+                if (activeClassForSmali != null) {
+                    val dexMethods by viewModel.dexMethods.collectAsState()
+                    val targetClass = activeClassForSmali!!
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { activeClassForSmali = null }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = targetClass.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        if (dexMethods.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        } else {
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                items(dexMethods) { method ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                editingMethod = method
+                                                editedSmaliValue = method.instructionsSmali.joinToString("\n")
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = method.name,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Registers: ${method.registersSize} | Instructions: ${method.insnsSize} words",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Tabs
+                    TabRow(selectedTabIndex = selectedTab) {
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0; dexSearchQuery = "" },
@@ -895,9 +972,15 @@ fun ApkInspectorScreen(
                 ) {
                     when (selectedTab) {
                         0 -> {
-                            // Strings tab
-                            val filteredStrings = dexStrings.filter {
-                                it.value.contains(dexSearchQuery, ignoreCase = true)
+                            // Strings tab with cached filter and limit of 200 items for butter-smooth scrolling
+                            val filteredStrings = remember(dexStrings, dexSearchQuery) {
+                                if (dexSearchQuery.isEmpty()) {
+                                    dexStrings.take(200)
+                                } else {
+                                    dexStrings.filter {
+                                        it.value.contains(dexSearchQuery, ignoreCase = true)
+                                    }.take(200)
+                                }
                             }
                             if (filteredStrings.isEmpty()) {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -945,9 +1028,15 @@ fun ApkInspectorScreen(
                             }
                         }
                         1 -> {
-                            // Classes tab
-                            val filteredClasses = dexClasses.filter {
-                                it.contains(dexSearchQuery, ignoreCase = true)
+                            // Classes tab with cached filter and limit of 200 items
+                            val filteredClasses = remember(dexClasses, dexSearchQuery) {
+                                if (dexSearchQuery.isEmpty()) {
+                                    dexClasses.take(200)
+                                } else {
+                                    dexClasses.filter {
+                                        it.name.contains(dexSearchQuery, ignoreCase = true)
+                                    }.take(200)
+                                }
                             }
                             if (filteredClasses.isEmpty()) {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -955,10 +1044,13 @@ fun ApkInspectorScreen(
                                 }
                             } else {
                                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                    items(filteredClasses) { className ->
+                                    items(filteredClasses) { dexCls ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .clickable {
+                                                    classActionSelected = dexCls
+                                                }
                                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -970,7 +1062,7 @@ fun ApkInspectorScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = className,
+                                                text = dexCls.name,
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontFamily = FontFamily.Monospace
                                             )
@@ -995,6 +1087,7 @@ fun ApkInspectorScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1065,6 +1158,243 @@ fun ApkInspectorScreen(
                     },
                     dismissButton = {
                         TextButton(onClick = { editingString = null }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            // Edit Class Dialog
+            if (editingClass != null) {
+                val dexCls = editingClass!!
+                val originalLen = dexCls.byteLength
+                val newLen = editedClassValue.toByteArray(Charsets.UTF_8).size
+                val isLengthOk = newLen <= originalLen
+
+                AlertDialog(
+                    onDismissRequest = { editingClass = null },
+                    title = { Text("Edit Class Descriptor") },
+                    text = {
+                        Column {
+                            Text(
+                                text = "DEX class names are stored as Type Descriptors (e.g. Lcom/example/MyClass;). Make sure to keep the leading 'L' and trailing ';'.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "To maintain binary offsets safely, the modified name must not exceed the original byte length.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Max Allowed: $originalLen bytes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Current: $newLen bytes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isLengthOk) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = editedClassValue,
+                                onValueChange = { editedClassValue = it },
+                                label = { Text("Class Name Descriptor") },
+                                modifier = Modifier.fillMaxWidth(),
+                                isError = !isLengthOk
+                            )
+                            if (!isLengthOk) {
+                                Text(
+                                    text = "Error: Exceeds original length by ${newLen - originalLen} bytes!",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (entry != null && isLengthOk) {
+                                    viewModel.saveDexClass(apkPath, entry.name, dexCls, editedClassValue)
+                                    editingClass = null
+                                }
+                            },
+                            enabled = isLengthOk
+                        ) {
+                            Text("Save & Re-sign")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editingClass = null }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
+            if (classActionSelected != null) {
+                val cls = classActionSelected!!
+                AlertDialog(
+                    onDismissRequest = { classActionSelected = null },
+                    title = { Text("Class Options", style = MaterialTheme.typography.titleMedium) },
+                    text = {
+                        Column {
+                            Text(
+                                text = cls.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Choose an action to perform on this class:")
+                        }
+                    },
+                    confirmButton = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                        ) {
+                            TextButton(onClick = { classActionSelected = null }) {
+                                Text("Cancel")
+                            }
+                            Button(
+                                onClick = {
+                                    editingClass = cls
+                                    editedClassValue = cls.name
+                                    classActionSelected = null
+                                }
+                            ) {
+                                Text("Rename Class")
+                            }
+                            Button(
+                                onClick = {
+                                    activeClassForSmali = cls
+                                    viewModel.loadClassMethods(apkPath, entry.name, cls)
+                                    classActionSelected = null
+                                }
+                            ) {
+                                Text("Edit Smali")
+                            }
+                        }
+                    }
+                )
+            }
+
+            if (editingMethod != null) {
+                val method = editingMethod!!
+                val originalWords = method.insnsSize
+
+                val lines = editedSmaliValue.split("\n")
+                val newWords = remember(editedSmaliValue) {
+                    val linesList = editedSmaliValue.split("\n")
+                    var count = 0
+                    for (lineRaw in linesList) {
+                        val line = lineRaw.trim()
+                        if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) continue
+                        val parts = line.split(Regex("\\s+"), 2)
+                        val mnemonic = parts[0]
+                        val operands = if (parts.size > 1) parts[1] else ""
+                        count += when (mnemonic) {
+                            "nop" -> 1
+                            "return-void" -> 1
+                            "return" -> 1
+                            "return-wide" -> 1
+                            "return-object" -> 1
+                            "const/4" -> 1
+                            "const/16" -> 2
+                            "const" -> 3
+                            "const-string" -> 2
+                            "const-class" -> 2
+                            "new-instance" -> 2
+                            "move" -> 1
+                            "move-object" -> 1
+                            else -> {
+                                if (mnemonic.startsWith("op_") || mnemonic.endsWith("-op") || mnemonic.endsWith("-range-op")) {
+                                    operands.split(Regex("\\s+")).count { it.trim().startsWith("0x") }
+                                } else {
+                                    line.split(Regex("\\s+")).count { it.trim().startsWith("0x") }
+                                }
+                            }
+                        }
+                    }
+                    count
+                }
+
+                val isSizeOk = newWords <= originalWords
+
+                AlertDialog(
+                    onDismissRequest = { editingMethod = null },
+                    title = { Text("Edit Smali Bytecode", style = MaterialTheme.typography.titleMedium) },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Method: ${method.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Max Allowed: $originalWords words",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Text(
+                                    text = "Current: $newWords words",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSizeOk) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = editedSmaliValue,
+                                onValueChange = { editedSmaliValue = it },
+                                label = { Text("Smali Code") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 240.dp),
+                                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                                isError = !isSizeOk
+                            )
+                            if (!isSizeOk) {
+                                Text(
+                                    text = "Error: Exceeds original method capacity by ${newWords - originalWords} words!",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (entry != null && isSizeOk) {
+                                    viewModel.saveDexMethod(apkPath, entry.name, activeClassForSmali!!, method, lines)
+                                    editingMethod = null
+                                }
+                            },
+                            enabled = isSizeOk
+                        ) {
+                            Text("Save & Re-sign")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editingMethod = null }) {
                             Text("Cancel")
                         }
                     }
