@@ -119,6 +119,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _rootOperationLogs = MutableStateFlow("")
     val rootOperationLogs: StateFlow<String> = _rootOperationLogs.asStateFlow()
 
+    private val _terminalLogs = MutableStateFlow("")
+    val terminalLogs: StateFlow<String> = _terminalLogs.asStateFlow()
+
+    private val _terminalIsRoot = MutableStateFlow(false)
+    val terminalIsRoot: StateFlow<Boolean> = _terminalIsRoot.asStateFlow()
+
+
     init {
         // Initialize with default paths
         val extDir = Environment.getExternalStorageDirectory().absolutePath
@@ -908,5 +915,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearRootLogs() {
         _rootOperationLogs.value = ""
+    }
+
+    fun toggleTerminalRoot() {
+        _terminalIsRoot.value = !_terminalIsRoot.value
+    }
+
+    fun runTerminalCommand(command: String, workingDir: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val isRoot = _terminalIsRoot.value
+            val prompt = if (isRoot) "#" else "$"
+            _terminalLogs.value += "\n$workingDir $prompt $command\n"
+            
+            val fullCommand = "cd \"$workingDir\" && $command"
+            val res = RootUtils.executeCommand(fullCommand, isRoot)
+            
+            if (res.output.isNotEmpty()) {
+                _terminalLogs.value += "${res.output}\n"
+            }
+            if (!res.success && res.error.isNotEmpty()) {
+                _terminalLogs.value += "Error: ${res.error}\n"
+            }
+        }
+    }
+
+    fun clearTerminalLogs() {
+        _terminalLogs.value = ""
     }
 }

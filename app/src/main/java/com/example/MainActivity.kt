@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -237,6 +238,7 @@ fun DoublePanelView(viewModel: EditorViewModel) {
     var createIsFolder by remember { mutableStateOf(false) }
     var targetPanelForCreate by remember { mutableStateOf(PanelType.LEFT) }
     var showRootMountDialog by remember { mutableStateOf(false) }
+    var showTerminalDialog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Dual Toolbar / Utility actions
@@ -244,7 +246,7 @@ fun DoublePanelView(viewModel: EditorViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -253,13 +255,13 @@ fun DoublePanelView(viewModel: EditorViewModel) {
                 enabled = leftFiles.any { !it.isDirectory } && rightFiles.any { !it.isDirectory },
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 4.dp)
-                    .testTag("compare_files_button"),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    .padding(end = 2.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
             ) {
-                Icon(imageVector = Icons.Default.List, contentDescription = "Compare", modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Compare", fontSize = 11.sp, maxLines = 1)
+                Icon(imageVector = Icons.Default.List, contentDescription = "Compare", modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("Compare", fontSize = 10.sp, maxLines = 1)
             }
 
             Button(
@@ -270,25 +272,38 @@ fun DoublePanelView(viewModel: EditorViewModel) {
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 4.dp)
-                    .testTag("create_file_button")
+                    .padding(horizontal = 2.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
             ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("New Item", fontSize = 11.sp, maxLines = 1)
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("New Item", fontSize = 10.sp, maxLines = 1)
             }
 
             Button(
                 onClick = { showRootMountDialog = true },
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 4.dp)
-                    .testTag("root_mount_button"),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    .padding(horizontal = 2.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
             ) {
-                Icon(imageVector = Icons.Default.Build, contentDescription = "Root Tools", modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Root & Mount", fontSize = 11.sp, maxLines = 1)
+                Icon(imageVector = Icons.Default.Build, contentDescription = "Root Tools", modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("Root", fontSize = 10.sp, maxLines = 1)
+            }
+
+            Button(
+                onClick = { showTerminalDialog = true },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 2.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+            ) {
+                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Terminal", modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("Terminal", fontSize = 10.sp, maxLines = 1)
             }
         }
 
@@ -552,6 +567,115 @@ fun DoublePanelView(viewModel: EditorViewModel) {
             dismissButton = {
                 TextButton(onClick = { viewModel.clearRootLogs() }) {
                     Text("Clear Logs", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+    }
+
+    if (showTerminalDialog) {
+        var commandInput by remember { mutableStateOf("") }
+        val terminalLogs by viewModel.terminalLogs.collectAsState()
+        val isRoot by viewModel.terminalIsRoot.collectAsState()
+        val activePath = if (activePanel == PanelType.LEFT) leftPath else rightPath
+
+        AlertDialog(
+            onDismissRequest = { showTerminalDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Terminal", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Terminal Emulator")
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Dir: $activePath",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Root", style = MaterialTheme.typography.labelSmall)
+                            Switch(
+                                checked = isRoot,
+                                onCheckedChange = { viewModel.toggleTerminalRoot() },
+                                modifier = Modifier.scale(0.7f)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(4.dp))
+                            .padding(6.dp)
+                    ) {
+                        val scrollState = rememberScrollState()
+                        LaunchedEffect(terminalLogs.length) {
+                            scrollState.animateScrollTo(scrollState.maxValue)
+                        }
+                        Text(
+                            text = terminalLogs.ifEmpty { "Terminal output...\n" },
+                            color = Color(0xFF00FF00),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.fillMaxSize().verticalScroll(scrollState)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = commandInput,
+                            onValueChange = { commandInput = it },
+                            placeholder = { Text("Command...", fontSize = 12.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            textStyle = MaterialTheme.typography.bodySmall,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                            ),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onSend = {
+                                    if (commandInput.isNotBlank()) {
+                                        viewModel.runTerminalCommand(commandInput, activePath)
+                                        commandInput = ""
+                                    }
+                                }
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                if (commandInput.isNotBlank()) {
+                                    viewModel.runTerminalCommand(commandInput, activePath)
+                                    commandInput = ""
+                                }
+                            },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+                        ) {
+                            Icon(Icons.Default.Send, contentDescription = "Run", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTerminalDialog = false }) {
+                    Text("Close")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.clearTerminalLogs() }) {
+                    Text("Clear", color = MaterialTheme.colorScheme.error)
                 }
             }
         )
