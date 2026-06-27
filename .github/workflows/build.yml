@@ -25,11 +25,22 @@ jobs:
 
       - name: Restore Keystore and Environment Files
         run: |
+          echo "Checking repository files..."
+          ls -la
           if [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            echo "Found debug.keystore.base64, decoding to debug.keystore..."
+            base64 --decode debug.keystore.base64 > debug.keystore
+            if [ -f debug.keystore ]; then
+              echo "Successfully decoded debug.keystore. Size: $(wc -c < debug.keystore) bytes"
+            else
+              echo "Error: debug.keystore file was not created!"
+            fi
+          else
+            echo "Error: debug.keystore.base64 not found in the root directory!"
           fi
           if [ -f .env.example ]; then
             cp .env.example .env
+            echo ".env restored from .env.example"
           fi
 
       - name: Restore Gradle Cache
