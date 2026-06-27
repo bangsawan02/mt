@@ -817,105 +817,360 @@ fun ApkInspectorScreen(
 
     if (decompiledContent != null) {
         val entry = selectedEntry
-        val isEditable = entry != null && (
-            entry.name.endsWith(".txt", ignoreCase = true) ||
-            entry.name.endsWith(".json", ignoreCase = true) ||
-            entry.name.endsWith(".properties", ignoreCase = true) ||
-            entry.name.endsWith(".html", ignoreCase = true) ||
-            entry.name.endsWith(".css", ignoreCase = true) ||
-            (entry.name.endsWith(".xml", ignoreCase = true) && !entry.name.lowercase().endsWith("androidmanifest.xml"))
-        )
+        val isDex = entry != null && entry.name.lowercase().endsWith(".dex")
 
-        // Detailed Entry Parser View (showing DEX headers, decoded binary xml, etc)
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surface)
-        ) {
-            Row(
+        if (isDex) {
+            val dexClasses by viewModel.dexClasses.collectAsState()
+            val dexStrings by viewModel.dexStrings.collectAsState()
+
+            var selectedTab by remember { mutableStateOf(0) } // 0: Strings, 1: Classes, 2: Header
+            var dexSearchQuery by remember { mutableStateOf("") }
+            var editingString by remember { mutableStateOf<DexString?>(null) }
+            var editedStringValue by remember { mutableStateOf("") }
+
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface)
             ) {
-                IconButton(onClick = {
-                    isEditing = false
-                    viewModel.closeApkEntryInspector()
-                }) {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Back")
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { viewModel.closeApkEntryInspector() }) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Back")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isEditable) {
-                    if (isEditing) {
-                        Button(
-                            onClick = {
-                                if (entry != null) {
-                                    viewModel.saveApkEntry(apkPath, entry.name, editedText)
-                                    isEditing = false
+
+                // Tabs
+                TabRow(selectedTabIndex = selectedTab) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0; dexSearchQuery = "" },
+                        text = { Text("Strings (${dexStrings.size})", fontSize = 13.sp) }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1; dexSearchQuery = "" },
+                        text = { Text("Classes (${dexClasses.size})", fontSize = 13.sp) }
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = { Text("Header", fontSize = 13.sp) }
+                    )
+                }
+
+                // Search Bar for Strings and Classes
+                if (selectedTab == 0 || selectedTab == 1) {
+                    OutlinedTextField(
+                        value = dexSearchQuery,
+                        onValueChange = { dexSearchQuery = it },
+                        placeholder = { Text(if (selectedTab == 0) "Search strings..." else "Search classes...") },
+                        leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = "Search") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        singleLine = true
+                    )
+                }
+
+                // Content
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                ) {
+                    when (selectedTab) {
+                        0 -> {
+                            // Strings tab
+                            val filteredStrings = dexStrings.filter {
+                                it.value.contains(dexSearchQuery, ignoreCase = true)
+                            }
+                            if (filteredStrings.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("No matching strings found", color = MaterialTheme.colorScheme.outline)
                                 }
-                            },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2E7D32),
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier.padding(end = 4.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Save", modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Save & Sign", style = MaterialTheme.typography.labelMedium)
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                    items(filteredStrings) { dexStr ->
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    editingString = dexStr
+                                                    editedStringValue = dexStr.value
+                                                }
+                                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                                        ) {
+                                            Row(
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(
+                                                    text = "Index: ${dexStr.index}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Text(
+                                                    text = "${dexStr.byteLength} bytes",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.outline
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = dexStr.value,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontFamily = FontFamily.Monospace,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        IconButton(onClick = {
-                            editedText = decompiledContent ?: ""
-                            isEditing = true
-                        }) {
-                            Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit File")
+                        1 -> {
+                            // Classes tab
+                            val filteredClasses = dexClasses.filter {
+                                it.contains(dexSearchQuery, ignoreCase = true)
+                            }
+                            if (filteredClasses.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("No matching classes found", color = MaterialTheme.colorScheme.outline)
+                                }
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                    items(filteredClasses) { className ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Place,
+                                                contentDescription = "Class",
+                                                tint = MaterialTheme.colorScheme.secondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = className,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                    }
+                                }
+                            }
+                        }
+                        2 -> {
+                            // Raw Headers tab
+                            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                                item {
+                                    Text(
+                                        text = decompiledContent ?: "",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            lineHeight = 18.sp
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            Box(
+            // Edit String Dialog
+            if (editingString != null) {
+                val dexStr = editingString!!
+                val originalLen = dexStr.byteLength
+                val newLen = editedStringValue.toByteArray(Charsets.UTF_8).size
+                val isLengthOk = newLen <= originalLen
+
+                AlertDialog(
+                    onDismissRequest = { editingString = null },
+                    title = { Text("Edit DEX String") },
+                    text = {
+                        Column {
+                            Text(
+                                text = "To maintain binary offsets safely, the modified string must not exceed the original byte length.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Max Allowed: $originalLen bytes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Current: $newLen bytes",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isLengthOk) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = editedStringValue,
+                                onValueChange = { editedStringValue = it },
+                                label = { Text("String Value") },
+                                modifier = Modifier.fillMaxWidth(),
+                                isError = !isLengthOk
+                            )
+                            if (!isLengthOk) {
+                                Text(
+                                    text = "Error: Exceeds original length by ${newLen - originalLen} bytes!",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (entry != null && isLengthOk) {
+                                    viewModel.saveDexString(apkPath, entry.name, dexStr, editedStringValue)
+                                    editingString = null
+                                }
+                            },
+                            enabled = isLengthOk
+                        ) {
+                            Text("Save & Re-sign")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editingString = null }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+        } else {
+            val isEditable = entry != null && (
+                entry.name.endsWith(".txt", ignoreCase = true) ||
+                entry.name.endsWith(".json", ignoreCase = true) ||
+                entry.name.endsWith(".properties", ignoreCase = true) ||
+                entry.name.endsWith(".html", ignoreCase = true) ||
+                entry.name.endsWith(".css", ignoreCase = true) ||
+                (entry.name.endsWith(".xml", ignoreCase = true) && !entry.name.lowercase().endsWith("androidmanifest.xml"))
+            )
+
+            // Detailed Entry Parser View (showing DEX headers, decoded binary xml, etc)
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .weight(1f)
-                    .padding(8.dp)
+                    .background(MaterialTheme.colorScheme.surface)
             ) {
-                if (isEditing) {
-                    TextField(
-                        value = editedText,
-                        onValueChange = { editedText = it },
-                        textStyle = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            lineHeight = 18.sp
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent
-                        )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        isEditing = false
+                        viewModel.closeApkEntryInspector()
+                    }) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Back")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        item {
-                            Text(
-                                text = decompiledContent!!,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    lineHeight = 18.sp
+                    if (isEditable) {
+                        if (isEditing) {
+                            Button(
+                                onClick = {
+                                    if (entry != null) {
+                                        viewModel.saveApkEntry(apkPath, entry.name, editedText)
+                                        isEditing = false
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2E7D32),
+                                    contentColor = Color.White
                                 ),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = "Save", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Save & Sign", style = MaterialTheme.typography.labelMedium)
+                            }
+                        } else {
+                            IconButton(onClick = {
+                                editedText = decompiledContent ?: ""
+                                isEditing = true
+                            }) {
+                                Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit File")
+                            }
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                        .padding(8.dp)
+                ) {
+                    if (isEditing) {
+                        TextField(
+                            value = editedText,
+                            onValueChange = { editedText = it },
+                            textStyle = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 18.sp
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent
                             )
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item {
+                                Text(
+                                    text = decompiledContent!!,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        lineHeight = 18.sp
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
                     }
                 }

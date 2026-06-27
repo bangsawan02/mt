@@ -96,6 +96,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _selectedApkEntry = MutableStateFlow<ApkEntry?>(null)
     val selectedApkEntry: StateFlow<ApkEntry?> = _selectedApkEntry.asStateFlow()
 
+    private val _dexStrings = MutableStateFlow<List<DexString>>(emptyList())
+    val dexStrings: StateFlow<List<DexString>> = _dexStrings.asStateFlow()
+
+    private val _dexClasses = MutableStateFlow<List<String>>(emptyList())
+    val dexClasses: StateFlow<List<String>> = _dexClasses.asStateFlow()
+
     init {
         // Initialize with default paths
         val extDir = Environment.getExternalStorageDirectory().absolutePath
@@ -529,7 +535,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             ApkParser.decompileBinaryXml(entryBytes)
                         }
                         name.endsWith(".dex") -> {
-                            // Parse DEX classes & headers
+                            // Parse DEX classes, headers, and strings
+                            val classes = ApkParser.parseDexClasses(entryBytes)
+                            val strings = ApkParser.parseDexStrings(entryBytes)
+                            _dexClasses.value = classes
+                            _dexStrings.value = strings
                             ApkParser.parseDexHeader(entryBytes)
                         }
                         name.endsWith(".arsc") -> {
@@ -560,6 +570,42 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun closeApkEntryInspector() {
         _apkInspectorContent.value = null
         _selectedApkEntry.value = null
+        _dexStrings.value = emptyList()
+        _dexClasses.value = emptyList()
+    }
+
+    fun saveDexString(apkPath: String, entryName: String, dexString: DexString, newValue: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apkFile = File(apkPath)
+                val apkBytes = apkFile.readBytes()
+                val dexBytes = ApkParser.extractEntryBytes(apkBytes, entryName) ?: throw Exception("Could not find $entryName in APK")
+                
+                val modifiedDexBytes = ApkParser.writeDexStringInPlace(dexBytes, dexString, newValue)
+                
+                val modified = mapOf(entryName to modifiedDexBytes)
+                ApkParser.signApkWithEntries(apkFile, modified)
+                
+                val updatedDexBytes = ApkParser.extractEntryBytes(apkFile.readBytes(), entryName) ?: throw Exception("Could not reload $entryName")
+                val classes = ApkParser.parseDexClasses(updatedDexBytes)
+                val strings = ApkParser.parseDexStrings(updatedDexBytes)
+                val headerText = ApkParser.parseDexHeader(updatedDexBytes)
+                
+                withContext(Dispatchers.Main) {
+                    _dexClasses.value = classes
+                    _dexStrings.value = strings
+                    _apkInspectorContent.value = headerText
+                    
+                    val context = getApplication<Application>()
+                    android.widget.Toast.makeText(context, "DEX string updated and APK re-signed successfully!", android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    val context = getApplication<Application>()
+                    android.widget.Toast.makeText(context, "Failed to update DEX string: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     fun repairApkSignature(apkPath: String) {

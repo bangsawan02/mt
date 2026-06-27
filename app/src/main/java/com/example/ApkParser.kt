@@ -679,7 +679,198 @@ object ApkParser {
             throw e
         }
     }
+    
+    fun parseDexClasses(bytes: ByteArray): List<String> {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        if (bytes.size < 0x70) return emptyList()
+        // Read string IDs
+        buffer.position(0x38)
+        val stringIdsSize = buffer.int
+        val stringIdsOff = buffer.int
+        if (stringIdsOff <= 0 || stringIdsOff >= bytes.size) return emptyList()
+        
+        val stringOffsets = IntArray(stringIdsSize)
+        buffer.position(stringIdsOff)
+        for (i in 0 until stringIdsSize) {
+            stringOffsets[i] = buffer.int
+        }
+
+        // A helper to read a string by index
+        fun getString(index: Int): String {
+            if (index < 0 || index >= stringIdsSize) return ""
+            val offset = stringOffsets[index]
+            if (offset <= 0 || offset >= bytes.size) return ""
+            buffer.position(offset)
+            // Read uleb128 size
+            var result = 0
+            var shift = 0
+            var b: Byte
+            do {
+                b = buffer.get()
+                result = result or ((b.toInt() and 0x7f) shl shift)
+                shift += 7
+            } while ((b.toInt() and 0x80) != 0)
+            
+            // Read bytes until null terminator
+            val out = ByteArrayOutputStream()
+            while (true) {
+                val charByte = buffer.get()
+                if (charByte == 0.toByte()) break
+                out.write(charByte.toInt())
+            }
+            return String(out.toByteArray(), Charsets.UTF_8)
+        }
+
+        // Read type IDs
+        buffer.position(0x40)
+        val typeIdsSize = buffer.int
+        val typeIdsOff = buffer.int
+        if (typeIdsOff <= 0 || typeIdsOff >= bytes.size) return emptyList()
+        
+        val typeStringIndexes = IntArray(typeIdsSize)
+        buffer.position(typeIdsOff)
+        for (i in 0 until typeIdsSize) {
+            typeStringIndexes[i] = buffer.int
+        }
+
+        // A helper to get type string by index
+        fun getTypeString(index: Int): String {
+            if (index < 0 || index >= typeIdsSize) return ""
+            val stringIdx = typeStringIndexes[index]
+            return getString(stringIdx)
+        }
+
+        // Read Class Defs
+        buffer.position(0x60)
+        val classDefsSize = buffer.int
+        val classDefsOff = buffer.int
+        if (classDefsOff <= 0 || classDefsOff >= bytes.size) return emptyList()
+        buffer.position(classDefsOff)
+
+        val classes = mutableListOf<String>()
+        for (i in 0 until classDefsSize) {
+            val classIdx = buffer.int
+            val accessFlags = buffer.int
+            val superclassIdx = buffer.int
+            val interfacesOff = buffer.int
+            val sourceFileIdx = buffer.int
+            val annotationsOff = buffer.int
+            val classDataOff = buffer.int
+            val staticValuesOff = buffer.int
+
+            val className = getTypeString(classIdx)
+            if (className.isNotEmpty()) {
+                classes.add(className)
+            }
+        }
+        return classes
+    }
+
+    fun parseDexStrings(bytes: ByteArray): List<DexString> {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        if (bytes.size < 0x70) return emptyList()
+        buffer.position(0x38)
+        val stringIdsSize = buffer.int
+        val stringIdsOff = buffer.int
+        if (stringIdsOff <= 0 || stringIdsOff >= bytes.size) return emptyList()
+        
+        buffer.position(stringIdsOff)
+        val stringOffsets = IntArray(stringIdsSize)
+        for (i in 0 until stringIdsSize) {
+            stringOffsets[i] = buffer.int
+        }
+
+        val list = mutableListOf<DexString>()
+        for (i in 0 until stringIdsSize) {
+            val offset = stringOffsets[i]
+            if (offset <= 0 || offset >= bytes.size) continue
+            buffer.position(offset)
+            
+            // Read uleb128 size
+            var result = 0
+            var shift = 0
+            var b: Byte
+            do {
+                b = buffer.get()
+                result = result or ((b.toInt() and 0x7f) shl shift)
+                shift += 7
+            } while ((b.toInt() and 0x80) != 0)
+
+            val stringStartPos = buffer.position()
+            // Read bytes until null terminator
+            val out = ByteArrayOutputStream()
+            while (true) {
+                if (buffer.position() >= bytes.size) break
+                val charByte = buffer.get()
+                if (charByte == 0.toByte()) break
+                out.write(charByte.toInt())
+            }
+            val value = String(out.toByteArray(), Charsets.UTF_8)
+            val byteLength = buffer.position() - 1 - stringStartPos
+
+            list.add(DexString(i, offset, value, byteLength))
+        }
+        return list
+    }
+
+    fun writeDexStringInPlace(bytes: ByteArray, dexString: DexString, newValue: String): ByteArray {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val offset = dexString.offset
+        buffer.position(offset)
+        
+        // Skip uleb128 size
+        var b: Byte
+        do {
+            b = buffer.get()
+        } while ((b.toInt() and 0x80) != 0)
+
+        val stringStartPos = buffer.position()
+        val newBytes = newValue.toByteArray(Charsets.UTF_8)
+        
+        // Write new bytes
+        buffer.put(newBytes)
+        
+        // Write a null terminator
+        buffer.put(0.toByte())
+        
+        // Fill remainder of the original byteLength with 0x00 null bytes
+        val writtenBytes = newBytes.size + 1
+        val remaining = (dexString.byteLength + 1) - writtenBytes
+        if (remaining > 0) {
+            for (k in 0 until remaining) {
+                buffer.put(0.toByte())
+            }
+        }
+
+        // Recalculate SHA-1 signature
+        val digest = MessageDigest.getInstance("SHA-1")
+        digest.update(bytes, 32, bytes.size - 32)
+        val sha1 = digest.digest()
+        
+        // Write signature back at offset 12
+        System.arraycopy(sha1, 0, bytes, 12, 20)
+        
+        // Adler32 checksum
+        val adler = java.util.zip.Adler32()
+        adler.update(bytes, 12, bytes.size - 12)
+        val checksum = adler.value.toInt()
+        
+        // Write checksum back at offset 8 in Little Endian
+        bytes[8] = (checksum and 0xFF).toByte()
+        bytes[9] = ((checksum shr 8) and 0xFF).toByte()
+        bytes[10] = ((checksum shr 16) and 0xFF).toByte()
+        bytes[11] = ((checksum shr 24) and 0xFF).toByte()
+
+        return bytes
+    }
 }
+
+data class DexString(
+    val index: Int,
+    val offset: Int,
+    val value: String,
+    val byteLength: Int
+)
 
 data class ApkEntry(
     val name: String,
