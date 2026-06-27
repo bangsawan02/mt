@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
 import java.io.File
 
 enum class PanelType { LEFT, RIGHT }
@@ -105,6 +106,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val _dexMethods = MutableStateFlow<List<DexMethod>>(emptyList())
     val dexMethods: StateFlow<List<DexMethod>> = _dexMethods.asStateFlow()
 
+    private val _appLogs = MutableStateFlow("")
+    val appLogs: StateFlow<String> = _appLogs.asStateFlow()
+    private var logcatJob: kotlinx.coroutines.Job? = null
+
+    private val _rootCheckState = MutableStateFlow("Not Checked")
+    val rootCheckState: StateFlow<String> = _rootCheckState.asStateFlow()
+
+    private val _partitionRwState = MutableStateFlow("Not Checked")
+    val partitionRwState: StateFlow<String> = _partitionRwState.asStateFlow()
+
+    private val _rootOperationLogs = MutableStateFlow("")
+    val rootOperationLogs: StateFlow<String> = _rootOperationLogs.asStateFlow()
+
     init {
         // Initialize with default paths
         val extDir = Environment.getExternalStorageDirectory().absolutePath
@@ -125,6 +139,50 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             _isRootAvailable.value = RootUtils.isRootAvailable()
             loadFiles(PanelType.LEFT)
             loadFiles(PanelType.RIGHT)
+        }
+        startLogcatCapture()
+    }
+
+    private fun startLogcatCapture() {
+        logcatJob?.cancel()
+        logcatJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Clear existing logcat
+                Runtime.getRuntime().exec("logcat -c").waitFor()
+                
+                // Read continuous logcat output for this process
+                val pid = android.os.Process.myPid().toString()
+                val process = Runtime.getRuntime().exec("logcat --pid=$pid")
+                val bufferedReader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
+                
+                var line: String?
+                while (this.isActive) {
+                    line = bufferedReader.readLine()
+                    if (line != null) {
+                        val currentLog = _appLogs.value
+                        var newLog = currentLog + line + "\n"
+                        if (newLog.length > 50000) {
+                            newLog = newLog.substring(newLog.length - 25000)
+                        }
+                        _appLogs.value = newLog
+                    } else {
+                        kotlinx.coroutines.delay(200)
+                    }
+                }
+            } catch (e: Exception) {
+                _appLogs.value += "Error capturing logcat: ${e.message}\n"
+            }
+        }
+    }
+
+    fun clearLogs() {
+        _appLogs.value = ""
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Runtime.getRuntime().exec("logcat -c")
+            } catch (e: Exception) {
+                // Ignore
+            }
         }
     }
 
@@ -721,5 +779,134 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    fun verifyAndRequestRoot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _rootCheckState.value = "Checking..."
+            _rootOperationLogs.value += "[*] Verifying root access...\n"
+            
+            val isAvail = RootUtils.isRootAvailable()
+            _isRootAvailable.value = isAvail
+            if (!isAvail) {
+                _rootCheckState.value = "su binary not found"
+                _rootOperationLogs.value += "[-] Error: su binary is missing on this device.\n"
+                return@launch
+            }
+            
+            val res = RootUtils.executeCommand("id", true)
+            if (res.success && (res.output.contains("uid=0") || res.output.contains("root"))) {
+                _rootCheckState.value = "Granted (UID 0)"
+                _isRootEnabled.value = true
+                _rootOperationLogs.value += "[+] Root access GRANTED successfully:\n${res.output}\n"
+                refreshAll()
+            } else {
+                _rootCheckState.value = "Denied / Not Granted"
+                _rootOperationLogs.value += "[-] Root access DENIED or failed: ${res.error}\n"
+            }
+        }
+    }
+
+    fun checkPartitionStatus(path: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _partitionRwState.value = "Checking..."
+            _rootOperationLogs.value += "[*] Checking partition status for path: $path\n"
+            
+            // Try to find the mount options for this path's mountpoint
+            val mountsRes = RootUtils.executeCommand("cat /proc/mounts", false)
+            var foundMountLine = ""
+            if (mountsRes.success) {
+                val lines = mountsRes.output.split("\n")
+                // Best matching mount point
+                var bestMatch = ""
+                for (line in lines) {
+                    val parts = line.split(" ")
+                    if (parts.size >= 4) {
+                        val mountPoint = parts[1]
+                        if (path.startsWith(mountPoint) && mountPoint.length > bestMatch.length) {
+                            bestMatch = mountPoint
+                            foundMountLine = line
+                        }
+                    }
+                }
+            }
+            
+            _rootOperationLogs.value += "[*] Parent mount point determined: ${if (foundMountLine.isNotEmpty()) foundMountLine else "Unknown"}\n"
+            
+            // Check write capability with root test file if root enabled
+            val isRoot = _isRootEnabled.value
+            var actuallyWritable = false
+            if (isRoot) {
+                val testFile = if (path.endsWith("/")) "${path}test_rw_mount" else "$path/test_rw_mount"
+                _rootOperationLogs.value += "[*] Performing touch write test as root: $testFile\n"
+                val touchRes = RootUtils.executeCommand("touch \"$testFile\" && rm -f \"$testFile\"", true)
+                if (touchRes.success) {
+                    actuallyWritable = true
+                    _rootOperationLogs.value += "[+] Write test succeeded! Path is WRITABLE via Root.\n"
+                } else {
+                    _rootOperationLogs.value += "[-] Write test failed! Path is READ-ONLY or write-protected: ${touchRes.error}\n"
+                }
+            } else {
+                val file = File(path)
+                actuallyWritable = file.canWrite()
+                _rootOperationLogs.value += "[*] Standard write check: canWrite() = $actuallyWritable\n"
+            }
+            
+            if (actuallyWritable) {
+                _partitionRwState.value = "Read-Write (RW)"
+            } else {
+                _partitionRwState.value = "Read-Only (RO)"
+            }
+        }
+    }
+
+    fun remountSystemPartition(path: String, makeWriteable: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _rootOperationLogs.value += "[*] Requesting partition remount for path: $path (as ${if (makeWriteable) "RW" else "RO"})\n"
+            
+            val isAvail = RootUtils.isRootAvailable()
+            if (!isAvail) {
+                _rootOperationLogs.value += "[-] Error: cannot remount, root is not available.\n"
+                return@launch
+            }
+            
+            // Find appropriate mount point
+            var mountPoint = "/system"
+            if (path.startsWith("/vendor")) {
+                mountPoint = "/vendor"
+            } else if (path.startsWith("/product")) {
+                mountPoint = "/product"
+            } else if (path.startsWith("/odm")) {
+                mountPoint = "/odm"
+            } else if (path == "/" || !path.startsWith("/system")) {
+                mountPoint = "/"
+            }
+            
+            val opt = if (makeWriteable) "rw,remount" else "ro,remount"
+            val cmd = "mount -o $opt $mountPoint"
+            _rootOperationLogs.value += "[*] Executing root mount command: $cmd\n"
+            
+            val res = RootUtils.executeCommand(cmd, true)
+            if (res.success) {
+                _rootOperationLogs.value += "[+] Remount command succeeded!\n"
+            } else {
+                _rootOperationLogs.value += "[-] Remount command failed: ${res.error}\n"
+                _rootOperationLogs.value += "[*] Attempting fallback mount command format: mount -o remount,$opt $mountPoint\n"
+                val fallbackCmd = "mount -o remount,$opt $mountPoint"
+                val resFallback = RootUtils.executeCommand(fallbackCmd, true)
+                if (resFallback.success) {
+                    _rootOperationLogs.value += "[+] Fallback remount succeeded!\n"
+                } else {
+                    _rootOperationLogs.value += "[-] Fallback remount failed: ${resFallback.error}\n"
+                }
+            }
+            
+            checkPartitionStatus(path)
+            refreshAll()
+        }
+    }
+
+    fun clearRootLogs() {
+        _rootOperationLogs.value = ""
     }
 }

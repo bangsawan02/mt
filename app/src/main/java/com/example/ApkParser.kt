@@ -14,6 +14,10 @@ import java.security.Signature
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import android.util.Base64
+import com.android.apksig.ApkSigner
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
 
 object ApkParser {
 
@@ -488,14 +492,13 @@ object ApkParser {
         return wrapTag(0x04, bytes)
     }
 
+    val DEBUG_KEYSTORE_B64 = "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"
+
     fun signApkWithEntries(apkFile: File, modifiedEntries: Map<String, ByteArray> = emptyMap()) {
-        val tempFile = File(apkFile.parentFile, apkFile.name + ".tmp")
+        val tempFile = File(apkFile.parentFile, apkFile.name + ".unsigned")
         try {
-            val md = MessageDigest.getInstance("SHA-256")
-            
-            // First Pass: Scan the original APK, compute SHA-256 digests of all entries, and collect metadata
-            val entryDigests = java.util.LinkedHashMap<String, String>()
             val entriesMeta = java.util.LinkedHashMap<String, ZipEntryInfo>()
+            val seenEntries = mutableSetOf<String>()
             
             var fis = java.io.FileInputStream(apkFile)
             var zis = ZipInputStream(fis)
@@ -503,164 +506,29 @@ object ApkParser {
             while (entry != null) {
                 if (!entry.isDirectory && !isSignatureFile(entry.name)) {
                     val name = entry.name
+                    seenEntries.add(name)
                     val dataBytes = modifiedEntries[name]
                     
-                    val (digestStr, size, crc) = if (dataBytes != null) {
-                        // Use modified data
-                        md.reset()
-                        val digest = md.digest(dataBytes)
-                        val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
-                        Triple(b64, dataBytes.size.toLong(), calculateCrc32(dataBytes))
+                    if (dataBytes != null) {
+                        entriesMeta[name] = ZipEntryInfo(name, entry.method, dataBytes.size.toLong(), calculateCrc32(dataBytes))
                     } else {
-                        // Compute digest of original data by streaming it
-                        md.reset()
                         val crcCalculator = java.util.zip.CRC32()
                         val buf = ByteArray(4096)
                         var totalLen = 0L
                         var len = zis.read(buf)
                         while (len != -1) {
-                            md.update(buf, 0, len)
                             crcCalculator.update(buf, 0, len)
                             totalLen += len
                             len = zis.read(buf)
                         }
-                        val digest = md.digest()
-                        val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
-                        Triple(b64, totalLen, crcCalculator.value)
+                        entriesMeta[name] = ZipEntryInfo(name, entry.method, totalLen, crcCalculator.value)
                     }
-                    
-                    entryDigests[name] = digestStr
-                    entriesMeta[name] = ZipEntryInfo(
-                        name = name,
-                        method = entry.method,
-                        size = size,
-                        crc = crc
-                    )
                 }
                 entry = zis.nextEntry
             }
             zis.close()
             fis.close()
             
-            // Add any newly added modified entries that didn't exist in original APK
-            for ((mName, mBytes) in modifiedEntries) {
-                if (!entryDigests.containsKey(mName)) {
-                    md.reset()
-                    val digest = md.digest(mBytes)
-                    val b64 = Base64.encodeToString(digest, Base64.NO_WRAP)
-                    entryDigests[mName] = b64
-                    entriesMeta[mName] = ZipEntryInfo(
-                        name = mName,
-                        method = ZipEntry.DEFLATED,
-                        size = mBytes.size.toLong(),
-                        crc = calculateCrc32(mBytes)
-                    )
-                }
-            }
-            
-            // Build Manifest
-            val manifestSb = StringBuilder()
-            manifestSb.append("Manifest-Version: 1.0\r\n")
-            manifestSb.append("Created-By: 1.0 (Android)\r\n\r\n")
-            
-            val entryBlocks = java.util.LinkedHashMap<String, ByteArray>()
-            for ((name, digestStr) in entryDigests) {
-                val blockSb = StringBuilder()
-                blockSb.append("Name: $name\r\n")
-                blockSb.append("SHA-256-Digest: $digestStr\r\n\r\n")
-                
-                val blockBytes = blockSb.toString().toByteArray(Charsets.UTF_8)
-                entryBlocks[name] = blockBytes
-                manifestSb.append(blockSb)
-            }
-            val manifestBytes = manifestSb.toString().toByteArray(Charsets.UTF_8)
-            
-            // Build SF (Signature File)
-            val sfSb = StringBuilder()
-            sfSb.append("Signature-Version: 1.0\r\n")
-            sfSb.append("Created-By: 1.0 (Android)\r\n")
-            
-            md.reset()
-            val manifestDigest = md.digest(manifestBytes)
-            val base64ManifestDigest = Base64.encodeToString(manifestDigest, Base64.NO_WRAP)
-            sfSb.append("SHA-256-Digest-Manifest: $base64ManifestDigest\r\n\r\n")
-            
-            for ((name, blockBytes) in entryBlocks) {
-                md.reset()
-                val blockDigest = md.digest(blockBytes)
-                val base64BlockDigest = Base64.encodeToString(blockDigest, Base64.NO_WRAP)
-                sfSb.append("Name: $name\r\n")
-                sfSb.append("SHA-256-Digest: $base64BlockDigest\r\n\r\n")
-            }
-            val sfBytes = sfSb.toString().toByteArray(Charsets.UTF_8)
-            
-            // Signature generation (RSA and PKCS7 block)
-            val keyGen = KeyPairGenerator.getInstance("RSA")
-            keyGen.initialize(2048)
-            val keyPair = keyGen.generateKeyPair()
-            
-            val serialNumber = integer(System.currentTimeMillis())
-            val sigAlg = asn1(0x30, oid("1.2.840.113549.1.1.11"), byteArrayOf(0x05, 0x00)) // SHA256withRSA
-            
-            val cnOid = oid("2.5.4.3")
-            val cnValue = wrapTag(0x0C, "Android Test".toByteArray(Charsets.UTF_8))
-            val cnSeq = asn1(0x30, cnOid, cnValue)
-            val issuerName = asn1(0x30, wrapTag(0x31, cnSeq))
-            
-            val start = wrapTag(0x17, "260101000000Z".toByteArray(Charsets.US_ASCII))
-            val end = wrapTag(0x17, "360101000000Z".toByteArray(Charsets.US_ASCII))
-            val validity = asn1(0x30, start, end)
-            
-            val tbsCert = asn1(0x30,
-                wrapTag(0xA0.toByte(), integer(2)), // Version 3
-                serialNumber,
-                sigAlg,
-                issuerName,
-                validity,
-                issuerName,
-                keyPair.public.encoded
-            )
-            
-            val signature = Signature.getInstance("SHA256withRSA")
-            signature.initSign(keyPair.private)
-            signature.update(tbsCert)
-            val sigBytes = signature.sign()
-            val signatureBitString = wrapTag(0x03, byteArrayOf(0x00) + sigBytes)
-            
-            val certificateBytes = asn1(0x30, tbsCert, sigAlg, signatureBitString)
-            
-            val rsaSigner = Signature.getInstance("SHA256withRSA")
-            rsaSigner.initSign(keyPair.private)
-            rsaSigner.update(sfBytes)
-            val rawSignature = rsaSigner.sign()
-            val signatureOctetString = octetString(rawSignature)
-            
-            val signerId = asn1(0x30, issuerName, serialNumber)
-            val digestAlg = asn1(0x30, oid("2.16.840.1.101.3.4.2.1"), byteArrayOf(0x05, 0x00))
-            val signatureAlgId = asn1(0x30, oid("1.2.840.113549.1.1.1"), byteArrayOf(0x05, 0x00))
-            
-            val signerInfo = asn1(0x30,
-                integer(1),
-                signerId,
-                digestAlg,
-                signatureAlgId,
-                signatureOctetString
-            )
-            
-            val signedData = asn1(0x30,
-                integer(1),
-                wrapTag(0x31, sigAlg),
-                asn1(0x30, oid("1.2.840.113549.1.7.1")),
-                wrapTag(0xA0.toByte(), certificateBytes),
-                wrapTag(0x31, signerInfo)
-            )
-            
-            val pkcs7Block = asn1(0x30,
-                oid("1.2.840.113549.1.7.2"),
-                wrapTag(0xA0.toByte(), signedData)
-            )
-            
-            // Second Pass: Write entries to temp output APK
             val tempFos = FileOutputStream(tempFile)
             val zos = ZipOutputStream(tempFos)
             
@@ -699,9 +567,9 @@ object ApkParser {
             zis.close()
             fis.close()
             
-            // Add any newly added modified entries that didn't exist in original APK
+            // Add newly added modified entries
             for ((mName, mBytes) in modifiedEntries) {
-                if (!entriesMeta.containsKey(mName)) {
+                if (!seenEntries.contains(mName)) {
                     val zEntry = ZipEntry(mName)
                     zos.putNextEntry(zEntry)
                     zos.write(mBytes)
@@ -709,31 +577,32 @@ object ApkParser {
                 }
             }
             
-            // Write signature files
-            val manifestEntry = ZipEntry("META-INF/MANIFEST.MF")
-            zos.putNextEntry(manifestEntry)
-            zos.write(manifestBytes)
-            zos.closeEntry()
-            
-            val sfEntry = ZipEntry("META-INF/CERT.SF")
-            zos.putNextEntry(sfEntry)
-            zos.write(sfBytes)
-            zos.closeEntry()
-            
-            val rsaEntry = ZipEntry("META-INF/CERT.RSA")
-            zos.putNextEntry(rsaEntry)
-            zos.write(pkcs7Block)
-            zos.closeEntry()
-            
             zos.close()
             tempFos.close()
+
+            // Now sign with apksig
+            val ksBytes = Base64.decode(DEBUG_KEYSTORE_B64, Base64.DEFAULT)
+            val ks = KeyStore.getInstance("PKCS12")
+            ks.load(ByteArrayInputStream(ksBytes), "android".toCharArray())
+            val key = ks.getKey("androiddebugkey", "android".toCharArray()) as PrivateKey
+            val cert = ks.getCertificate("androiddebugkey") as X509Certificate
+
+            val signerConfig = ApkSigner.SignerConfig.Builder("androiddebugkey", key, listOf(cert)).build()
+
+            val apkSigner = ApkSigner.Builder(listOf(signerConfig))
+                .setInputApk(tempFile)
+                .setOutputApk(apkFile)
+                .build()
+            
+            apkSigner.sign()
             
             if (tempFile.exists()) {
-                tempFile.copyTo(apkFile, overwrite = true)
                 tempFile.delete()
             }
         } catch (e: Exception) {
-            tempFile.delete()
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
             throw e
         }
     }

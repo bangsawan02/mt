@@ -45,6 +45,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -183,36 +188,39 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
         },
         contentWindowInsets = WindowInsets.safeDrawing
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (val view = activeView) {
-                is ActiveView.Explorer -> {
-                    DoublePanelView(viewModel)
-                }
-                is ActiveView.TextEditor -> {
-                    TextEditorView(
-                        filePath = view.filePath,
-                        isNewFile = view.isNewFile,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.CompareView -> {
-                    CompareViewScreen(
-                        fileAPath = view.fileAPath,
-                        fileBPath = view.fileBPath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.ApkInspector -> {
-                    ApkInspectorScreen(
-                        apkPath = view.apkPath,
-                        viewModel = viewModel
-                    )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (val view = activeView) {
+                    is ActiveView.Explorer -> {
+                        DoublePanelView(viewModel)
+                    }
+                    is ActiveView.TextEditor -> {
+                        TextEditorView(
+                            filePath = view.filePath,
+                            isNewFile = view.isNewFile,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.CompareView -> {
+                        CompareViewScreen(
+                            fileAPath = view.fileAPath,
+                            fileBPath = view.fileBPath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.ApkInspector -> {
+                        ApkInspectorScreen(
+                            apkPath = view.apkPath,
+                            viewModel = viewModel
+                        )
+                    }
                 }
             }
+            ConsoleView(viewModel)
         }
     }
 }
@@ -228,6 +236,7 @@ fun DoublePanelView(viewModel: EditorViewModel) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var createIsFolder by remember { mutableStateOf(false) }
     var targetPanelForCreate by remember { mutableStateOf(PanelType.LEFT) }
+    var showRootMountDialog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Dual Toolbar / Utility actions
@@ -248,9 +257,9 @@ fun DoublePanelView(viewModel: EditorViewModel) {
                     .testTag("compare_files_button"),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
             ) {
-                Icon(imageVector = Icons.Default.List, contentDescription = "Compare")
+                Icon(imageVector = Icons.Default.List, contentDescription = "Compare", modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Compare Panel Files", fontSize = 12.sp)
+                Text("Compare", fontSize = 11.sp, maxLines = 1)
             }
 
             Button(
@@ -261,12 +270,25 @@ fun DoublePanelView(viewModel: EditorViewModel) {
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 4.dp)
+                    .padding(horizontal = 4.dp)
                     .testTag("create_file_button")
             ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "Add")
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("New File / Folder", fontSize = 12.sp)
+                Text("New Item", fontSize = 11.sp, maxLines = 1)
+            }
+
+            Button(
+                onClick = { showRootMountDialog = true },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 4.dp)
+                    .testTag("root_mount_button"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) {
+                Icon(imageVector = Icons.Default.Build, contentDescription = "Root Tools", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Root & Mount", fontSize = 11.sp, maxLines = 1)
             }
         }
 
@@ -376,6 +398,164 @@ fun DoublePanelView(viewModel: EditorViewModel) {
             }
         )
     }
+
+    if (showRootMountDialog) {
+        val rootCheckState by viewModel.rootCheckState.collectAsState()
+        val partitionRwState by viewModel.partitionRwState.collectAsState()
+        val rootOperationLogs by viewModel.rootOperationLogs.collectAsState()
+        val activePath = if (activePanel == PanelType.LEFT) leftPath else rightPath
+
+        LaunchedEffect(showRootMountDialog, activePath) {
+            viewModel.checkPartitionStatus(activePath)
+        }
+
+        AlertDialog(
+            onDismissRequest = { showRootMountDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Build, contentDescription = "Root Tools", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Root & Mount Manager")
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Current Active Path:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = activePath,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Root Access Check:", style = MaterialTheme.typography.bodyMedium)
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (rootCheckState.contains("Granted")) {
+                                    Color(0xFFE8F5E9)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                }
+                            )
+                        ) {
+                            Text(
+                                text = rootCheckState,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (rootCheckState.contains("Granted")) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Partition R/W Status:", style = MaterialTheme.typography.bodyMedium)
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (partitionRwState.contains("Read-Write") || partitionRwState.contains("RW")) {
+                                    Color(0xFFE8F5E9)
+                                } else {
+                                    Color(0xFFFFEBEE)
+                                }
+                            )
+                        ) {
+                            Text(
+                                text = partitionRwState,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (partitionRwState.contains("Read-Write") || partitionRwState.contains("RW")) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Operations console logs:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(4.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), shape = RoundedCornerShape(4.dp))
+                            .padding(6.dp)
+                    ) {
+                        val logScrollState = rememberScrollState()
+                        LaunchedEffect(rootOperationLogs.length) {
+                            logScrollState.animateScrollTo(logScrollState.maxValue)
+                        }
+                        Text(
+                            text = rootOperationLogs.ifEmpty { "Console output logs..." },
+                            color = Color(0xFF00FF00),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            modifier = Modifier.verticalScroll(logScrollState)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(
+                            onClick = { viewModel.verifyAndRequestRoot() },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text("Request Root", fontSize = 10.sp)
+                        }
+                        Button(
+                            onClick = { viewModel.checkPartitionStatus(activePath) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text("Check Status", fontSize = 10.sp)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(
+                            onClick = { viewModel.remountSystemPartition(activePath, true) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text("Mount R/W", fontSize = 10.sp)
+                        }
+                        Button(
+                            onClick = { viewModel.remountSystemPartition(activePath, false) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text("Mount R/O", fontSize = 10.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRootMountDialog = false }) {
+                    Text("Close")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.clearRootLogs() }) {
+                    Text("Clear Logs", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -440,7 +620,51 @@ fun FilePanelColumn(
 
         HorizontalDivider()
 
-        if (files.isEmpty()) {
+        var filterQuery by remember { mutableStateOf("") }
+        val filteredFiles = remember(files, filterQuery) {
+            files.filter { it.name.contains(filterQuery, ignoreCase = true) }
+        }
+
+        OutlinedTextField(
+            value = filterQuery,
+            onValueChange = { filterQuery = it },
+            placeholder = { Text("Filter directory...", fontSize = 11.sp) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    modifier = Modifier.size(14.dp)
+                )
+            },
+            trailingIcon = {
+                if (filterQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = { filterQuery = "" },
+                        modifier = Modifier.size(20.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Clear,
+                            contentDescription = "Clear",
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .testTag("panel_filter_input"),
+            textStyle = MaterialTheme.typography.bodySmall,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+            )
+        )
+
+        HorizontalDivider()
+
+        if (filteredFiles.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -448,9 +672,14 @@ fun FilePanelColumn(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Empty directory\n(or partition unreadable)",
+                    text = if (files.isEmpty()) {
+                        "Empty directory\n(or partition unreadable)"
+                    } else {
+                        "No matching files"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.outline,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
             }
         } else {
@@ -460,7 +689,7 @@ fun FilePanelColumn(
                     .weight(1f)
                     .padding(2.dp)
             ) {
-                items(files) { item ->
+                items(filteredFiles) { item ->
                     val fileColor = when {
                         item.isDirectory -> MaterialTheme.colorScheme.primary
                         item.isApk -> Color(0xFF2E7D32) // green for apk
@@ -1664,6 +1893,76 @@ fun ApkInspectorScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun ConsoleView(viewModel: EditorViewModel) {
+    val logs by viewModel.appLogs.collectAsState()
+    var isExpanded by remember { mutableStateOf(false) }
+    val clipboardManager: ClipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1E1E1E))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { isExpanded = !isExpanded }
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Console Logs",
+                color = Color(0xFF00FF00),
+                style = MaterialTheme.typography.labelMedium
+            )
+            if (isExpanded) {
+                Row {
+                    IconButton(
+                        onClick = { 
+                            clipboardManager.setText(AnnotatedString(logs))
+                            android.widget.Toast.makeText(context, "Logs copied!", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "Copy", tint = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    IconButton(
+                        onClick = { viewModel.clearLogs() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear", tint = Color.White)
+                    }
+                }
+            }
+        }
+        if (isExpanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(250.dp)
+                    .background(Color.Black)
+                    .padding(8.dp)
+            ) {
+                val scrollState = rememberScrollState()
+                LaunchedEffect(logs.length) {
+                    scrollState.animateScrollTo(scrollState.maxValue)
+                }
+                Text(
+                    text = logs.ifEmpty { "No logs available." },
+                    color = Color(0xFF00FF00),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    modifier = Modifier.verticalScroll(scrollState)
+                )
             }
         }
     }
