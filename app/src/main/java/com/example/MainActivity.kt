@@ -58,10 +58,12 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.FilePanelColumn
+import com.example.ui.components.CodeEditorScreen
 import com.example.ui.components.PhotoEditorView
 import com.example.ui.components.ArchiveViewerScreen
 import com.example.ui.components.ArchiveProgressDialog
 import com.example.ui.components.HexEditorScreen
+import com.example.ui.components.VideoPlayerScreen
 import com.example.ui.components.AppManagerScreen
 import com.example.ui.components.ChecksumViewerDialog
 import com.example.ui.components.ApkSignerDialog
@@ -107,10 +109,6 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
         viewModel.navigateBack(activePanel)
     }
 
-    BackHandler(enabled = activeView is ActiveView.TextEditor) {
-        viewModel.navigateToExplorer()
-    }
-
     BackHandler(enabled = activeView is ActiveView.CompareView) {
         viewModel.navigateToExplorer()
     }
@@ -120,6 +118,10 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
     }
 
     BackHandler(enabled = activeView is ActiveView.HexEditor) {
+        viewModel.navigateToExplorer()
+    }
+
+    BackHandler(enabled = activeView is ActiveView.VideoPlayer) {
         viewModel.navigateToExplorer()
     }
 
@@ -331,7 +333,7 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                     )
                 }
                 is ActiveView.TextEditor -> {
-                    TextEditorView(
+                    CodeEditorScreen(
                         filePath = view.filePath,
                         isNewFile = view.isNewFile,
                         viewModel = viewModel
@@ -364,6 +366,12 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                 }
                 is ActiveView.HexEditor -> {
                     HexEditorScreen(
+                        filePath = view.filePath,
+                        viewModel = viewModel
+                    )
+                }
+                is ActiveView.VideoPlayer -> {
+                    VideoPlayerScreen(
                         filePath = view.filePath,
                         viewModel = viewModel
                     )
@@ -909,6 +917,7 @@ fun DoublePanelView(
                         val targetZip = "${item.path}.zip"
                         viewModel.compressFilesToZip(listOf(item.path), targetZip)
                     },
+                    onOpenVideoPlayer = { item -> viewModel.openVideoPlayer(item.path) },
                     onOpenHexEditor = { item -> viewModel.openHexEditor(item.path) },
                     onShowChecksum = { item -> onShowChecksum(item) },
                     onSignApk = { item -> onSignApk(item) },
@@ -946,6 +955,7 @@ fun DoublePanelView(
                         val targetZip = "${item.path}.zip"
                         viewModel.compressFilesToZip(listOf(item.path), targetZip)
                     },
+                    onOpenVideoPlayer = { item -> viewModel.openVideoPlayer(item.path) },
                     onOpenHexEditor = { item -> viewModel.openHexEditor(item.path) },
                     onShowChecksum = { item -> onShowChecksum(item) },
                     onSignApk = { item -> onSignApk(item) },
@@ -1001,619 +1011,7 @@ fun DoublePanelView(
         )
     }
 }
-@Composable
-fun TextEditorView(
-    filePath: String,
-    isNewFile: Boolean,
-    viewModel: EditorViewModel
-) {
-    val context = LocalContext.current
-    val content by viewModel.editorContent.collectAsState()
-    val title by viewModel.editorTitle.collectAsState()
-    val query by viewModel.searchQuery.collectAsState()
 
-    // File extension for syntax highlighter
-    val fileExt = remember(filePath) {
-        val name = File(filePath).name
-        if (name.contains(".")) name.substringAfterLast(".").lowercase() else ""
-    }
-
-    // Text & Selection state
-    var textFieldValue by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(text = "")) }
-    var initialLoaded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(content) {
-        if (!initialLoaded || content != textFieldValue.text) {
-            textFieldValue = androidx.compose.ui.text.input.TextFieldValue(text = content)
-            initialLoaded = true
-        }
-    }
-
-    // Undo / Redo Manager
-    val undoRedoManager = remember { UndoRedoManager() }
-    LaunchedEffect(filePath) {
-        undoRedoManager.clear(content)
-    }
-
-    // Preferences & UI State
-    var isSaved by remember { mutableStateOf(true) }
-    var isSearchExpanded by remember { mutableStateOf(false) }
-    var replaceQuery by remember { mutableStateOf("") }
-    var isCaseSensitive by remember { mutableStateOf(false) }
-    var wordWrap by remember { mutableStateOf(true) }
-    var fontSizeSp by remember { mutableStateOf(14) }
-    var showGoToLineDialog by remember { mutableStateOf(false) }
-    var gotoLineInput by remember { mutableStateOf("") }
-    var activeMatchIndex by remember { mutableStateOf(0) }
-
-    // Synchronized scroll state
-    val scrollState = rememberScrollState()
-
-    // Helper function to update text and track undo history
-    fun updateText(newVal: androidx.compose.ui.text.input.TextFieldValue) {
-        if (newVal.text != textFieldValue.text) {
-            undoRedoManager.pushState(textFieldValue.text)
-            isSaved = false
-        }
-        textFieldValue = newVal
-    }
-
-    fun insertSymbol(symbol: String) {
-        val currentText = textFieldValue.text
-        val sel = textFieldValue.selection
-        val start = sel.min.coerceIn(0, currentText.length)
-        val end = sel.max.coerceIn(0, currentText.length)
-        val newText = currentText.substring(0, start) + symbol + currentText.substring(end)
-        val newCursor = start + symbol.length
-        updateText(
-            androidx.compose.ui.text.input.TextFieldValue(
-                text = newText,
-                selection = androidx.compose.ui.text.TextRange(newCursor)
-            )
-        )
-    }
-
-    val lines = remember(textFieldValue.text) { textFieldValue.text.lines() }
-    val lineCount = lines.size
-    val charCount = textFieldValue.text.length
-    val fileSizeKb = (charCount * 1.0 / 1024).let { "%.1f KB".format(it) }
-
-    // Search matches calculation
-    val matches = remember(textFieldValue.text, query, isCaseSensitive) {
-        if (query.isEmpty()) emptyList<Int>()
-        else {
-            val list = mutableListOf<Int>()
-            var idx = 0
-            val source = if (isCaseSensitive) textFieldValue.text else textFieldValue.text.lowercase()
-            val target = if (isCaseSensitive) query else query.lowercase()
-            while (idx < source.length) {
-                val found = source.indexOf(target, idx)
-                if (found != -1) {
-                    list.add(found)
-                    idx = found + target.length.coerceAtLeast(1)
-                } else break
-            }
-            list
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-    ) {
-        // --- 1. Top Editor Header Bar ---
-        Surface(
-            tonalElevation = 2.dp,
-            color = MaterialTheme.colorScheme.surfaceVariant
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        IconButton(onClick = { viewModel.navigateToExplorer() }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Kembali")
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 160.dp)
-                                )
-                                if (fileExt.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = RoundedCornerShape(4.dp)
-                                    ) {
-                                        Text(
-                                            text = fileExt.uppercase(),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            Text(
-                                text = if (isSaved) "Tersimpan" else "Ada Perubahan",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isSaved) Color(0xFF4CAF50) else Color(0xFFFF9800)
-                            )
-                        }
-                    }
-
-                    // Top Action Icons
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Undo
-                        IconButton(
-                            onClick = {
-                                undoRedoManager.undo(textFieldValue.text)?.let { prev ->
-                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(text = prev)
-                                    isSaved = false
-                                }
-                            },
-                            enabled = undoRedoManager.canUndo()
-                        ) {
-                            Text("↶", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (undoRedoManager.canUndo()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline)
-                        }
-
-                        // Redo
-                        IconButton(
-                            onClick = {
-                                undoRedoManager.redo()?.let { next ->
-                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(text = next)
-                                    isSaved = false
-                                }
-                            },
-                            enabled = undoRedoManager.canRedo()
-                        ) {
-                            Text("↷", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (undoRedoManager.canRedo()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline)
-                        }
-
-                        // Format Code
-                        IconButton(onClick = {
-                            val (success, formatted) = CodeFormatter.format(textFieldValue.text, fileExt)
-                            if (success) {
-                                updateText(androidx.compose.ui.text.input.TextFieldValue(text = formatted))
-                                Toast.makeText(context, "Kode dirapikan", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, formatted, Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Text("{}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        }
-
-                        // Search Toggle
-                        IconButton(onClick = { isSearchExpanded = !isSearchExpanded }) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "Cari Teks",
-                                tint = if (isSearchExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // Save Button
-                        Button(
-                            onClick = {
-                                viewModel.updateEditorContent(textFieldValue.text)
-                                viewModel.saveEditorFile(filePath)
-                                isSaved = true
-                                Toast.makeText(context, "File berhasil disimpan", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier
-                                .padding(start = 4.dp)
-                                .testTag("save_file_button")
-                        ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Simpan", modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Simpan", fontSize = 13.sp)
-                        }
-                    }
-                }
-
-                // Secondary Action Toolbar (Zoom, Wrap, GoToLine)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
-                        .padding(horizontal = 12.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Word Wrap Toggle
-                        FilterChip(
-                            selected = wordWrap,
-                            onClick = { wordWrap = !wordWrap },
-                            label = { Text("Wrap", fontSize = 11.sp) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Menu,
-                                    contentDescription = "Bungkus Baris",
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            },
-                            modifier = Modifier.height(28.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        // Go to Line Button
-                        OutlinedButton(
-                            onClick = { showGoToLineDialog = true },
-                            modifier = Modifier.height(28.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.List, contentDescription = "Lompat Baris", modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Lompat #", fontSize = 11.sp)
-                        }
-                    }
-
-                    // Font Zoom Control
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Ukuran: ${fontSizeSp}sp", style = MaterialTheme.typography.labelSmall)
-                        IconButton(
-                            onClick = { if (fontSizeSp > 10) fontSizeSp -= 2 },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-                        IconButton(
-                            onClick = { if (fontSizeSp < 28) fontSizeSp += 2 },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Text("+", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- 2. Search & Replace Panel ---
-        AnimatedVisibility(visible = isSearchExpanded) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = {
-                                viewModel.updateSearchQuery(it)
-                                activeMatchIndex = 0
-                            },
-                            placeholder = { Text("Cari...", fontSize = 12.sp) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(max = 48.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            trailingIcon = {
-                                if (query.isNotEmpty()) {
-                                    IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Hapus", modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        // Matches navigation
-                        Text(
-                            text = if (matches.isNotEmpty()) "${activeMatchIndex + 1}/${matches.size}" else "0",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 4.dp)
-                        )
-
-                        IconButton(
-                            onClick = {
-                                if (matches.isNotEmpty()) {
-                                    activeMatchIndex = (activeMatchIndex - 1 + matches.size) % matches.size
-                                    val targetOffset = matches[activeMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = androidx.compose.ui.text.TextRange(targetOffset, targetOffset + query.length)
-                                    )
-                                }
-                            },
-                            enabled = matches.isNotEmpty(),
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Sebelumnya")
-                        }
-
-                        IconButton(
-                            onClick = {
-                                if (matches.isNotEmpty()) {
-                                    activeMatchIndex = (activeMatchIndex + 1) % matches.size
-                                    val targetOffset = matches[activeMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = androidx.compose.ui.text.TextRange(targetOffset, targetOffset + query.length)
-                                    )
-                                }
-                            },
-                            enabled = matches.isNotEmpty(),
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Berikutnya")
-                        }
-
-                        // Case Sensitive Toggle
-                        FilterChip(
-                            selected = isCaseSensitive,
-                            onClick = { isCaseSensitive = !isCaseSensitive },
-                            label = { Text("a/A", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                            modifier = Modifier.height(28.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Replace Row
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value = replaceQuery,
-                            onValueChange = { replaceQuery = it },
-                            placeholder = { Text("Ganti dengan...", fontSize = 12.sp) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(max = 48.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium
-                        )
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        Button(
-                            onClick = {
-                                if (query.isNotEmpty() && matches.isNotEmpty()) {
-                                    val targetOffset = matches[activeMatchIndex.coerceIn(0, matches.lastIndex)]
-                                    val currentText = textFieldValue.text
-                                    val newText = currentText.substring(0, targetOffset) + replaceQuery + currentText.substring(targetOffset + query.length)
-                                    updateText(
-                                        androidx.compose.ui.text.input.TextFieldValue(
-                                            text = newText,
-                                            selection = androidx.compose.ui.text.TextRange(targetOffset + replaceQuery.length)
-                                        )
-                                    )
-                                    Toast.makeText(context, "1 teks diganti", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            enabled = query.isNotEmpty() && matches.isNotEmpty(),
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) {
-                            Text("Ganti", fontSize = 11.sp)
-                        }
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        OutlinedButton(
-                            onClick = {
-                                if (query.isNotEmpty()) {
-                                    val count = matches.size
-                                    val newText = if (isCaseSensitive) {
-                                        textFieldValue.text.replace(query, replaceQuery)
-                                    } else {
-                                        textFieldValue.text.replace(Regex(Regex.escape(query), RegexOption.IGNORE_CASE), replaceQuery)
-                                    }
-                                    updateText(androidx.compose.ui.text.input.TextFieldValue(text = newText))
-                                    Toast.makeText(context, "$count teks diganti", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            enabled = query.isNotEmpty() && matches.isNotEmpty(),
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) {
-                            Text("Semua", fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- 3. Main Code Canvas (Line Numbers + Editor Input) ---
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(2.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-            ) {
-                // Line Numbers Gutter
-                Column(
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    for (i in 1..lineCount) {
-                        Text(
-                            text = "$i",
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = fontSizeSp.sp,
-                                lineHeight = (fontSizeSp * 1.35).sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // Code Input Field
-                val horizontalScrollState = rememberScrollState()
-                val codeModifier = if (wordWrap) {
-                    Modifier.weight(1f)
-                } else {
-                    Modifier
-                        .weight(1f)
-                        .horizontalScroll(horizontalScrollState)
-                }
-
-                OutlinedTextField(
-                    value = textFieldValue,
-                    onValueChange = { updateText(it) },
-                    modifier = codeModifier
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                        .testTag("text_editor_field"),
-                    textStyle = TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = fontSizeSp.sp,
-                        lineHeight = (fontSizeSp * 1.35).sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    ),
-                    visualTransformation = CodeSyntaxVisualTransformation(fileExt),
-                    placeholder = { Text("Tulis konten di sini...", fontSize = fontSizeSp.sp) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent
-                    )
-                )
-            }
-        }
-
-        // --- 4. Bilah Simbol Cepat (Quick Keyboard Symbols) ---
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            val symbols = listOf("{", "}", "(", ")", "[", "]", "\"", "'", "<", ">", "=", ";", ":", "/", "\\", "->", "Tab", "Undo", "Redo")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                symbols.forEach { sym ->
-                    AssistChip(
-                        onClick = {
-                            when (sym) {
-                                "Tab" -> insertSymbol("  ")
-                                "Undo" -> undoRedoManager.undo(textFieldValue.text)?.let { prev ->
-                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(text = prev)
-                                    isSaved = false
-                                }
-                                "Redo" -> undoRedoManager.redo()?.let { next ->
-                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(text = next)
-                                    isSaved = false
-                                }
-                                else -> insertSymbol(sym)
-                            }
-                        },
-                        label = { Text(sym, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                        modifier = Modifier
-                            .padding(horizontal = 2.dp)
-                            .height(32.dp)
-                    )
-                }
-            }
-        }
-
-        // --- 5. Bottom Editor Stats Bar ---
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Baris: $lineCount | Karakter: $charCount | Ukuran: $fileSizeKb",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = if (wordWrap) "Wrap: ON" else "Wrap: OFF",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-    }
-
-    // --- 6. Dialog Lompat ke Baris (Go To Line) ---
-    if (showGoToLineDialog) {
-        AlertDialog(
-            onDismissRequest = { showGoToLineDialog = false },
-            title = { Text("Lompat ke Baris") },
-            text = {
-                Column {
-                    Text("Masukkan nomor baris (1 - $lineCount):", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = gotoLineInput,
-                        onValueChange = { gotoLineInput = it.filter { char -> char.isDigit() } },
-                        singleLine = true,
-                        placeholder = { Text("misal: 25") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val targetLine = gotoLineInput.toIntOrNull()
-                        if (targetLine != null && targetLine in 1..lineCount) {
-                            var offset = 0
-                            for (i in 0 until (targetLine - 1)) {
-                                offset += lines[i].length + 1 // including newline
-                            }
-                            textFieldValue = textFieldValue.copy(
-                                selection = androidx.compose.ui.text.TextRange(offset.coerceIn(0, textFieldValue.text.length))
-                            )
-                            Toast.makeText(context, "Melompat ke baris $targetLine", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Nomor baris tidak valid", Toast.LENGTH_SHORT).show()
-                        }
-                        showGoToLineDialog = false
-                        gotoLineInput = ""
-                    }
-                ) {
-                    Text("Lompat")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showGoToLineDialog = false }) {
-                    Text("Batal")
-                }
-            }
-        )
-    }
-}
 
 
 @Composable

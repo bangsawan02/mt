@@ -39,6 +39,7 @@ fun FilePanelColumn(
     onOpenArchive: ((FileItem) -> Unit)? = null,
     onExtractTo: ((FileItem, String) -> Unit)? = null,
     onCompressToZip: ((FileItem) -> Unit)? = null,
+    onOpenVideoPlayer: ((FileItem) -> Unit)? = null,
     onOpenHexEditor: ((FileItem) -> Unit)? = null,
     onShowChecksum: ((FileItem) -> Unit)? = null,
     onSignApk: ((FileItem) -> Unit)? = null,
@@ -230,6 +231,18 @@ fun FilePanelColumn(
 
                     // Hex Editor & Checksum Options for all regular files
                     if (!file.isDirectory) {
+                        if (file.isVideo) {
+                            ListItem(
+                                headlineContent = { Text("Putar Video (Video Player)") },
+                                leadingContent = { Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFFE91E63)) },
+                                modifier = Modifier.clickable {
+                                    val target = file
+                                    itemToOptions = null
+                                    onOpenVideoPlayer?.invoke(target)
+                                }
+                            )
+                        }
+
                         ListItem(
                             headlineContent = { Text("Buka di Hex Editor") },
                             leadingContent = { Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFF5C6BC0)) },
@@ -325,6 +338,7 @@ fun FileItemView(
         file.isApk -> Color(0xFF4CAF50)      // Android green
         file.isArchive -> Color(0xFFE65100)  // Archive Amber/Orange
         file.isImage -> Color(0xFFFF9800)    // Image orange
+        file.isVideo -> Color(0xFFE91E63)    // Video Pink/Red
         else -> Color(0xFF1976D2)            // File blue
     }
 
@@ -501,6 +515,24 @@ fun FileIcon(
                     size = androidx.compose.ui.geometry.Size(4f.dp.toPx(), 5f.dp.toPx()),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(1f.dp.toPx(), 1f.dp.toPx())
                 )
+            }
+            file.isVideo -> {
+                // Film strip / video card with play triangle
+                val rectPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(2f.dp.toPx(), 4f.dp.toPx())
+                    lineTo(22f.dp.toPx(), 4f.dp.toPx())
+                    lineTo(22f.dp.toPx(), 20f.dp.toPx())
+                    lineTo(2f.dp.toPx(), 20f.dp.toPx())
+                    close()
+                }
+                drawPath(rectPath, color = color)
+                val playPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(9f.dp.toPx(), 8f.dp.toPx())
+                    lineTo(16f.dp.toPx(), 12f.dp.toPx())
+                    lineTo(9f.dp.toPx(), 16f.dp.toPx())
+                    close()
+                }
+                drawPath(playPath, color = Color.White)
             }
             file.isImage -> {
                 // Landscape frame with sun and mountains

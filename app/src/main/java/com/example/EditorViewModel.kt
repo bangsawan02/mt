@@ -23,6 +23,7 @@ sealed interface ActiveView {
     data class PhotoEditor(val filePath: String) : ActiveView
     data class ArchiveViewer(val archivePath: String, val currentInternalPath: String = "") : ActiveView
     data class HexEditor(val filePath: String) : ActiveView
+    data class VideoPlayer(val filePath: String) : ActiveView
     object AppManager : ActiveView
 }
 
@@ -34,6 +35,7 @@ data class FileItem(
     val lastModified: Long,
     val isApk: Boolean = false,
     val isImage: Boolean = false,
+    val isVideo: Boolean = false,
     val isArchive: Boolean = false
 )
 
@@ -317,6 +319,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return ext in listOf("png", "jpg", "jpeg", "webp", "bmp", "gif")
     }
 
+    fun isVideoFile(name: String): Boolean {
+        val ext = name.lowercase().substringAfterLast(".", "")
+        return ext in listOf("mp4", "mkv", "webm", "avi", "3gp", "mov", "flv", "ts", "wmv", "m4v", "mpg", "mpeg")
+    }
+
     // Bookmarks & Quick Access
     private val _bookmarks = MutableStateFlow<List<String>>(
         listOf(
@@ -354,6 +361,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _activeView.value = ActiveView.PhotoEditor(filePath)
     }
 
+    fun openVideoPlayer(filePath: String) {
+        _activeView.value = ActiveView.VideoPlayer(filePath)
+    }
+
     fun loadPath(panel: PanelType, path: String) {
         if (panel == PanelType.LEFT) {
             _leftPath.value = path
@@ -387,6 +398,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 lastModified = f.lastModified(),
                                 isApk = f.name.lowercase().endsWith(".apk"),
                                 isImage = isImageFile(f.name),
+                                isVideo = isVideoFile(f.name),
                                 isArchive = ArchiveManager.isArchiveFile(f.name)
                             )
                         )
@@ -418,6 +430,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                     lastModified = 0L,
                                     isApk = name.lowercase().endsWith(".apk"),
                                     isImage = isImageFile(name),
+                                    isVideo = isVideoFile(name),
                                     isArchive = ArchiveManager.isArchiveFile(name)
                                 )
                             )
@@ -459,6 +472,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 openArchiveViewer(item.path)
             } else if (item.isImage) {
                 openPhotoEditor(item.path)
+            } else if (item.isVideo) {
+                openVideoPlayer(item.path)
             } else {
                 openTextEditor(item.path)
             }
@@ -562,24 +577,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _searchQuery.value = query
     }
 
-    fun saveEditorFile(filePath: String) {
+    fun saveEditorFile(filePath: String, closeAfterSave: Boolean = false, onComplete: ((Boolean, String?) -> Unit)? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             val content = _editorContent.value
             val isRoot = _isRootEnabled.value
+            var success = true
+            var errorMsg: String? = null
             try {
                 if (isRoot) {
                     // Write via echo or shell redirection (safely handling newlines)
                     val escapedContent = content.replace("'", "'\\''")
-                    RootUtils.executeCommand("echo -n '$escapedContent' > \"$filePath\"", true)
+                    val res = RootUtils.executeCommand("echo -n '$escapedContent' > \"$filePath\"", true)
+                    if (res.exitCode != 0) {
+                        success = false
+                        errorMsg = res.output
+                    }
                 } else {
                     File(filePath).writeText(content)
                 }
             } catch (e: Exception) {
-                // Fail silently or handle
+                success = false
+                errorMsg = e.localizedMessage ?: "Gagal menyimpan file"
             }
             withContext(Dispatchers.Main) {
                 refreshAll()
-                navigateToExplorer()
+                onComplete?.invoke(success, errorMsg)
+                if (closeAfterSave && success) {
+                    navigateToExplorer()
+                }
             }
         }
     }
