@@ -4,14 +4,18 @@
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
 
-# Keep APK signing tool
--keep class com.android.apksig.** { *; }
+# APK signing tool rules
+-keep class com.android.apksig.ApkSigner$** { *; }
+-keep class com.android.apksig.ApkSigner { *; }
+-keep class com.android.apksig.DefaultApkSignerEngine** { *; }
 -dontwarn com.android.apksig.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.conscrypt.**
 
-# Keep Media3 / ExoPlayer
--keep class androidx.media3.** { *; }
+# Media3 / ExoPlayer
 -dontwarn androidx.media3.**
 
-# Keep models and ViewModel state classes
--keep class com.example.** { *; }
--keepclassmembers class com.example.** { *; }
+# Keep models & ViewModel state
+-keepclassmembers class * implements java.io.Serializable { *; }
+-dontwarn com.example.**
+
