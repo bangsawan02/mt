@@ -37,6 +37,16 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
+      - name: Ensure Gradle Wrapper Exists and is Valid
+        run: |
+          mkdir -p gradle/wrapper
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ] || ! jar tf gradle/wrapper/gradle-wrapper.jar > /dev/null 2>&1; then
+            echo "gradle-wrapper.jar is missing or corrupted. Downloading/regenerating..."
+            rm -f gradle/wrapper/gradle-wrapper.jar
+            curl -sSL https://raw.githubusercontent.com/gradle/gradle/v8.7.0/subprojects/wrapper/src/main/resources/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar || \
+            gradle wrapper --gradle-version 8.7
+          fi
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
