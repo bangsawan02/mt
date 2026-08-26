@@ -160,13 +160,18 @@ fun FilePanelColumn(
                                     if (isMultiSelectMode) {
                                         onToggleSelection?.invoke(file)
                                     } else {
-                                        itemToOptions = file
+                                        onEnterMultiSelect?.invoke(file)
                                     }
                                 }
                             },
                             onIconClick = {
                                 if (file.name != "..") {
                                     onToggleSelection?.invoke(file)
+                                }
+                            },
+                            onOptionsClick = {
+                                if (file.name != "..") {
+                                    itemToOptions = file
                                 }
                             }
                         )
@@ -445,7 +450,8 @@ fun FileItemView(
     isMultiSelectMode: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onIconClick: (() -> Unit)? = null
+    onIconClick: (() -> Unit)? = null,
+    onOptionsClick: (() -> Unit)? = null
 ) {
     // Folder icons are dark gray / charcoal, file icons have high contrast colors
     val iconColor = when {
@@ -530,13 +536,17 @@ fun FileItemView(
                             .size(22.dp)
                             .padding(end = 2.dp)
                     )
-                } else if (file.isDirectory && (file.name == "bin" || file.name == "bugreports" || file.name == "etc")) {
-                    Text(
-                        text = "->",
-                        color = Color.Gray,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
+                } else {
+                    IconButton(
+                        onClick = { onOptionsClick?.invoke() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Options",
+                            tint = Color.Gray
+                        )
+                    }
                 }
             }
         }
