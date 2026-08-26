@@ -61,10 +61,10 @@ jobs:
           base64 -d my-upload-key.jks.base64 > my-upload-key.jks
         fi
 
-        if [ ! -f my-upload-key.jks ] || ! keytool -list -keystore my-upload-key.jks -storepass android > /dev/null 2>&1; then
-          echo "my-upload-key.jks corrupt atau tidak valid. Membuat ulang..."
+        if [ ! -f my-upload-key.jks ] || ! keytool -list -keystore my-upload-key.jks -storepass android -alias upload > /dev/null 2>&1; then
+          echo "my-upload-key.jks tidak valid atau alias 'upload' tidak ditemukan. Membuat ulang..."
           rm -f my-upload-key.jks
-          keytool -genkey -v -keystore my-upload-key.jks -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Upload,O=Android,C=US"
+          keytool -genkey -v -keystore my-upload-key.jks -storepass android -alias upload -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Upload,O=Android,C=US"
         fi
 
         if [ ! -f debug.keystore ]; then
