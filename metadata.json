@@ -1,0 +1,6 @@
+{
+  "name": "telokuh manager",
+  "description": "An MT Manager style APK, system file, and photo editor for Android. Supports dual-panel view, DEX/XML/ARSC parsing, root access check, file comparison, and an integrated offline photo editor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
