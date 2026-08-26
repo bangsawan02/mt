@@ -42,7 +42,7 @@ jobs:
     - name: Fix Corrupt Gradle Wrapper
       run: |
         rm -rf gradle/wrapper/gradle-wrapper.jar
-        gradle wrapper 
+        gradle wrapper --gradle-version 9.3.1
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew

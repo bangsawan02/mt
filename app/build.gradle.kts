@@ -20,9 +20,6 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     
-    // Optimasi bahasa (hanya simpan id dan en)
-    resourceConfigurations.addAll(listOf("id", "en"))
-    
     // Batasi arsitektur CPU untuk mengurangi duplikasi pustaka .so jika ada
     ndk {
       abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -60,14 +57,12 @@ android {
       isCrunchPngs = true
       isMinifyEnabled = true
       isShrinkResources = true
-      isZipAlignEnabled = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
       isMinifyEnabled = true
       isShrinkResources = true
-      isZipAlignEnabled = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("debugConfig")
     }
@@ -84,14 +79,20 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
   buildFeatures {
     compose = true
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+}
+
+kotlin {
+  compilerOptions {
+    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
