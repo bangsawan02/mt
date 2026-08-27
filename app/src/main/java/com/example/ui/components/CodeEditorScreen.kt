@@ -12,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -21,9 +22,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -86,12 +89,13 @@ fun CodeEditorScreen(
     var replaceQuery by remember { mutableStateOf("") }
     var isCaseSensitive by remember { mutableStateOf(false) }
     var isRegexSearch by remember { mutableStateOf(false) }
-    var wordWrap by remember { mutableStateOf(true) }
+    var wordWrap by remember { mutableStateOf(false) }
     var fontSizeSp by remember { mutableIntStateOf(14) }
     var showGoToLineDialog by remember { mutableStateOf(false) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var gotoLineInput by remember { mutableStateOf("") }
     var activeMatchIndex by remember { mutableIntStateOf(0) }
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     // Synchronized scroll states
     val verticalScrollState = rememberScrollState()
@@ -144,33 +148,74 @@ fun CodeEditorScreen(
         Triple(line, col, selLen)
     }
 
-    // High-Performance Gutter View Line Numbers with Active Line Highlight
+    // High-Performance Gutter View Line Numbers with Active Line Highlight & Precision Wrap Alignment
     val currentActiveLine = cursorMetrics.first
     val activeLineColor = MaterialTheme.colorScheme.primary
     val inactiveLineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
-    val annotatedGutterText = remember(lineCount, currentActiveLine, activeLineColor, inactiveLineColor) {
+    val annotatedGutterText = remember(textFieldValue.text, lineCount, currentActiveLine, activeLineColor, inactiveLineColor, textLayoutResult, wordWrap) {
         buildAnnotatedString {
-            for (i in 1..lineCount) {
-                if (i > 1) append("\n")
-                if (i == currentActiveLine) {
-                    pushStyle(
-                        SpanStyle(
-                            color = activeLineColor,
-                            fontWeight = FontWeight.ExtraBold
+            val layout = textLayoutResult
+            if (layout == null || !wordWrap) {
+                // Standard 1-to-1 line number per text line
+                for (i in 1..lineCount) {
+                    if (i > 1) append("\n")
+                    if (i == currentActiveLine) {
+                        pushStyle(
+                            SpanStyle(
+                                color = activeLineColor,
+                                fontWeight = FontWeight.Bold
+                            )
                         )
-                    )
-                    append("$i")
-                    pop()
-                } else {
-                    pushStyle(
-                        SpanStyle(
-                            color = inactiveLineColor,
-                            fontWeight = FontWeight.Medium
+                        append("$i")
+                        pop()
+                    } else {
+                        pushStyle(
+                            SpanStyle(
+                                color = inactiveLineColor,
+                                fontWeight = FontWeight.Medium
+                            )
                         )
-                    )
-                    append("$i")
-                    pop()
+                        append("$i")
+                        pop()
+                    }
+                }
+            } else {
+                // Dynamic wrapped line alignment using textLayoutResult
+                val textStr = textFieldValue.text
+                val lineList = textStr.split("\n")
+                var currentOffset = 0
+                var isFirst = true
+
+                for (lineIdx in lineList.indices) {
+                    val lineNum = lineIdx + 1
+                    val lineText = lineList[lineIdx]
+                    val startOffset = currentOffset
+                    val endOffset = (currentOffset + lineText.length).coerceAtMost(textStr.length)
+
+                    val startVisualLine = layout.getLineForOffset(startOffset)
+                    val endVisualLine = if (lineText.isEmpty()) startVisualLine else layout.getLineForOffset(endOffset)
+                    val visualLineCount = (endVisualLine - startVisualLine + 1).coerceAtLeast(1)
+
+                    if (!isFirst) append("\n")
+                    isFirst = false
+
+                    if (lineNum == currentActiveLine) {
+                        pushStyle(SpanStyle(color = activeLineColor, fontWeight = FontWeight.Bold))
+                        append("$lineNum")
+                        pop()
+                    } else {
+                        pushStyle(SpanStyle(color = inactiveLineColor, fontWeight = FontWeight.Medium))
+                        append("$lineNum")
+                        pop()
+                    }
+
+                    // Append blank newlines matching visual wrap lines
+                    for (v in 1 until visualLineCount) {
+                        append("\n")
+                    }
+
+                    currentOffset += lineText.length + 1
                 }
             }
         }
@@ -374,6 +419,38 @@ fun CodeEditorScreen(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Simpan", fontSize = 13.sp)
                         }
+                    }
+                }
+
+                // MT Manager Sub-Header Bar (File name, Cursor Position, Encoding)
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val (curLine, curCol, _) = cursorMetrics
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "$curLine:$curCol  UTF-8",
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
                     }
                 }
 
@@ -648,24 +725,25 @@ fun CodeEditorScreen(
             }
         }
 
-        // --- 3. Main Code Canvas (Optimized Line Numbers + High-Performance Editor) ---
+        // --- 3. Main Code Canvas (Optimized Line Numbers + High-Performance BasicTextField Editor) ---
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
         ) {
-            val lineHeight = (fontSizeSp * 1.4).sp
+            val lineHeight = (fontSizeSp * 1.5).sp
 
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(verticalScrollState)
             ) {
-                // High-Performance Interactive Line Numbers Gutter View (With Active Line Highlight)
+                // High-Performance Interactive Line Numbers Gutter View
                 AnimatedVisibility(visible = showGutter) {
                     Row(modifier = Modifier.fillMaxHeight()) {
                         Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                             modifier = Modifier
                                 .fillMaxHeight()
                                 .clickable { showGoToLineDialog = true }
@@ -679,59 +757,67 @@ fun CodeEditorScreen(
                                     textAlign = TextAlign.End
                                 ),
                                 modifier = Modifier
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                                    .widthIn(min = 32.dp)
+                                    .padding(vertical = 4.dp, horizontal = 8.dp)
+                                    .widthIn(min = 36.dp)
                             )
                         }
                         Box(
                             modifier = Modifier
                                 .fillMaxHeight()
                                 .width(1.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(2.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-                // Code Input Area
+                // High-Precision Code Input Area using BasicTextField
                 val codeModifier = if (wordWrap) {
-                    Modifier.weight(1f)
+                    Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
                 } else {
                     Modifier
                         .weight(1f)
                         .horizontalScroll(horizontalScrollState)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
                 }
 
-                OutlinedTextField(
+                BasicTextField(
                     value = textFieldValue,
                     onValueChange = { updateText(it) },
                     readOnly = isReadOnly,
-                    modifier = codeModifier
-                        .padding(vertical = 2.dp, horizontal = 4.dp)
-                        .testTag("text_editor_field"),
+                    modifier = codeModifier.testTag("text_editor_field"),
                     textStyle = TextStyle(
                         fontFamily = FontFamily.Monospace,
                         fontSize = fontSizeSp.sp,
                         lineHeight = lineHeight,
                         color = MaterialTheme.colorScheme.onSurface
                     ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     visualTransformation = CodeSyntaxVisualTransformation(
                         fileExtension = detectedLanguage,
                         searchQuery = query,
                         isCaseSensitive = isCaseSensitive
                     ),
-                    placeholder = {
-                        Text(
-                            text = if (isReadOnly) "Berkas hanya-baca (terkunci)" else "Tulis kode / konten di sini...",
-                            fontSize = fontSizeSp.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent
-                    )
+                    onTextLayout = { textLayoutResult = it },
+                    decorationBox = { innerTextField ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (textFieldValue.text.isEmpty()) {
+                                Text(
+                                    text = if (isReadOnly) "Berkas hanya-baca (terkunci)" else "Tulis kode / konten di sini...",
+                                    style = TextStyle(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = fontSizeSp.sp,
+                                        lineHeight = lineHeight,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                )
+                            }
+                            innerTextField()
+                        }
+                    }
                 )
             }
         }
