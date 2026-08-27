@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import android.content.Context
 import android.widget.Toast
@@ -49,7 +50,7 @@ fun ApkSignerDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val isRootEnabled by viewModel.isRootEnabled.collectAsState()
+    val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
 
     var isSigning by remember { mutableStateOf(false) }
     var signProgressMessage by remember { mutableStateOf("") }

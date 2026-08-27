@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -64,7 +66,7 @@ fun AppManagerScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val isRootEnabled by viewModel.isRootEnabled.collectAsState()
+    val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
 
     var appList by remember { mutableStateOf<List<InstalledAppItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -149,7 +151,7 @@ fun AppManagerScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { viewModel.navigateToExplorer() }) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Kembali")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -378,7 +380,9 @@ private fun AppListItem(
             )
             Text(
                 text = "v${app.versionName} • ${formatAppSize(app.fileSize)}",
-                style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF9E9E9E), fontSize = 10.sp)
+                style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF9E9E9E), fontSize = 10.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 

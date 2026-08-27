@@ -42,6 +42,7 @@ secretsGradlePlugin = "2.0.1"
 googleServices = "4.5.0"
 
 [libraries]
+libsu-core = { group = "com.github.topjohnwu.libsu", name = "core", version = "6.0.0" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

@@ -5,9 +5,7 @@
 -keepattributes EnclosingMethod
 
 # APK signing tool rules
--keep class com.android.apksig.ApkSigner$** { *; }
--keep class com.android.apksig.ApkSigner { *; }
--keep class com.android.apksig.DefaultApkSignerEngine** { *; }
+-keep class com.android.apksig.** { *; }
 -dontwarn com.android.apksig.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**

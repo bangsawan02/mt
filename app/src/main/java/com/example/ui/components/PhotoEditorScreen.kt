@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -28,9 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -110,7 +109,7 @@ fun PhotoEditorView(
     viewModel: EditorViewModel
 ) {
     val context = LocalContext.current
-    val isRootEnabled by viewModel.isRootEnabled.collectAsState()
+    val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
 
     var viewMode by remember { mutableStateOf(ViewMode.VIEWER) }
     var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -429,7 +428,7 @@ fun PhotoEditorView(
                                     Text(text = "•", color = Color.Gray, fontSize = 12.sp)
 
                                     Icon(
-                                        imageVector = Icons.Default.RotateRight,
+                                        imageVector = Icons.AutoMirrored.Filled.RotateRight,
                                         contentDescription = "Putar Cepat",
                                         tint = Color.White,
                                         modifier = Modifier
@@ -851,7 +850,7 @@ fun PhotoEditorView(
                                                 modifier = Modifier.weight(1f),
                                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                                             ) {
-                                                Icon(Icons.Default.RotateLeft, contentDescription = "Kiri", modifier = Modifier.size(16.dp))
+                                                Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = "Kiri", modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 Text("Kiri -90°", fontSize = 10.sp)
                                             }
@@ -865,7 +864,7 @@ fun PhotoEditorView(
                                                 modifier = Modifier.weight(1f),
                                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                                             ) {
-                                                Icon(Icons.Default.RotateRight, contentDescription = "Kanan", modifier = Modifier.size(16.dp))
+                                                Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = "Kanan", modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 Text("Kanan 90°", fontSize = 10.sp)
                                             }

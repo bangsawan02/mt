@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,14 +45,14 @@ fun ArchiveViewerScreen(
     val clipboardManager = LocalClipboardManager.current
     val archiveFile = remember(archivePath) { File(archivePath) }
 
-    val currentInternalPath by viewModel.archiveInternalPath.collectAsState()
-    val entries by viewModel.archiveEntries.collectAsState()
-    val isLoading by viewModel.archiveLoading.collectAsState()
-    val errorMsg by viewModel.archiveErrorMessage.collectAsState()
-    val progressState by viewModel.archiveProgressState.collectAsState()
+    val currentInternalPath by viewModel.archiveInternalPath.collectAsStateWithLifecycle()
+    val entries by viewModel.archiveEntries.collectAsStateWithLifecycle()
+    val isLoading by viewModel.archiveLoading.collectAsStateWithLifecycle()
+    val errorMsg by viewModel.archiveErrorMessage.collectAsStateWithLifecycle()
+    val progressState by viewModel.archiveProgressState.collectAsStateWithLifecycle()
 
-    val previewEntryText by viewModel.archivePreviewText.collectAsState()
-    val previewEntryName by viewModel.archivePreviewEntryName.collectAsState()
+    val previewEntryText by viewModel.archivePreviewText.collectAsStateWithLifecycle()
+    val previewEntryName by viewModel.archivePreviewEntryName.collectAsStateWithLifecycle()
 
     var searchQuery by remember { mutableStateOf("") }
     var showExtractAllDialog by remember { mutableStateOf(false) }
@@ -119,7 +121,7 @@ fun ArchiveViewerScreen(
                         }
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Kembali"
                         )
                     }
@@ -587,7 +589,7 @@ private fun ArchiveItemRow(
                     item.name == ".." || item.isDirectory -> Icons.Default.Folder
                     isText -> Icons.Default.Code
                     item.name.lowercase().endsWith(".dex") -> Icons.Default.Memory
-                    else -> Icons.Default.InsertDriveFile
+                    else -> Icons.AutoMirrored.Filled.InsertDriveFile
                 },
                 contentDescription = null,
                 tint = iconTint,

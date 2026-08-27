@@ -291,6 +291,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _appLogs = MutableStateFlow("")
     val appLogs: StateFlow<String> = _appLogs.asStateFlow()
+    
+    private val _operationProgress = MutableStateFlow<Float?>(null)
+    val operationProgress: StateFlow<Float?> = _operationProgress.asStateFlow()
+
     private var logcatJob: kotlinx.coroutines.Job? = null
 
     private val _rootCheckState = MutableStateFlow("Not Checked")
@@ -668,23 +672,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun copyFileItem(item: FileItem, targetDirPath: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
-            try {
-                if (isRoot) {
-                    val res = RootUtils.executeCommand("cp -rf \"${item.path}\" \"$targetDirPath/\"", true)
-                    if (!res.success) {
-                        _appLogs.value += "\n[Error Salin File] ${res.error}\n"
-                    }
-                } else {
-                    val source = File(item.path)
-                    val dest = File(targetDirPath, source.name)
-                    if (source.isDirectory) {
-                        source.copyRecursively(dest, overwrite = true)
-                    } else {
-                        source.copyTo(dest, overwrite = true)
-                    }
-                }
-            } catch (e: Exception) {
-                _appLogs.value += "\n[Error Salin File] ${e.localizedMessage ?: e.message}\n"
+            val res = FileManager.copyFileItem(File(item.path), File(targetDirPath), isRoot, _operationProgress)
+            if (!res.success) {
+                _appLogs.value += "\n[Error Salin File] ${res.error}\n"
             }
             refreshAll()
         }
@@ -693,30 +683,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun moveFileItem(item: FileItem, targetDirPath: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
-            try {
-                if (isRoot) {
-                    val res = RootUtils.executeCommand("mv \"${item.path}\" \"$targetDirPath/\"", true)
-                    if (!res.success) {
-                        _appLogs.value += "\n[Error Pindah File] ${res.error}\n"
-                    }
-                } else {
-                    val source = File(item.path)
-                    val dest = File(targetDirPath, source.name)
-                    if (source.renameTo(dest)) {
-                        // Success
-                    } else {
-                        // Across partitions fallback
-                        if (source.isDirectory) {
-                            source.copyRecursively(dest, overwrite = true)
-                            source.deleteRecursively()
-                        } else {
-                            source.copyTo(dest, overwrite = true)
-                            source.delete()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                _appLogs.value += "\n[Error Pindah File] ${e.localizedMessage ?: e.message}\n"
+            val res = FileManager.moveFileItem(File(item.path), File(targetDirPath), isRoot, _operationProgress)
+            if (!res.success) {
+                _appLogs.value += "\n[Error Pindah File] ${res.error}\n"
             }
             refreshAll()
         }
@@ -725,28 +694,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteFileItem(panel: PanelType, item: FileItem) {
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
-            try {
-                if (isRoot) {
-                    val res = RootUtils.executeCommand("rm -rf \"${item.path}\"", true)
-                    if (!res.success) {
-                        _appLogs.value += "\n[Error Hapus File] ${res.error}\n"
-                    }
-                } else {
-                    val file = File(item.path)
-                    if (file.isDirectory) {
-                        file.deleteRecursively()
-                    } else {
-                        file.delete()
-                    }
-                }
-            } catch (e: Exception) {
-                _appLogs.value += "\n[Error Hapus File] ${e.localizedMessage ?: e.message}\n"
+            val res = FileManager.deleteFileItem(File(item.path), isRoot, _operationProgress)
+            if (!res.success) {
+                _appLogs.value += "\n[Error Hapus File] ${res.error}\n"
             }
             loadFiles(panel)
         }
     }
 
     // --- BATCH MULTI-SELECT OPERATIONS ---
+
     fun copySelectedFiles(panel: PanelType, targetDirPath: String) {
         val selectedPaths = (if (panel == PanelType.LEFT) _selectedLeftFiles.value else _selectedRightFiles.value).toList()
         if (selectedPaths.isEmpty()) return
@@ -754,23 +711,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
             for (path in selectedPaths) {
-                try {
-                    if (isRoot) {
-                        val res = RootUtils.executeCommand("cp -rf \"$path\" \"$targetDirPath/\"", true)
-                        if (!res.success) {
-                            _appLogs.value += "\n[Error Salin File] ${res.error}\n"
-                        }
-                    } else {
-                        val source = File(path)
-                        val dest = File(targetDirPath, source.name)
-                        if (source.isDirectory) {
-                            source.copyRecursively(dest, overwrite = true)
-                        } else {
-                            source.copyTo(dest, overwrite = true)
-                        }
-                    }
-                } catch (e: Exception) {
-                    _appLogs.value += "\n[Error Salin File $path] ${e.localizedMessage ?: e.message}\n"
+                val res = FileManager.copyFileItem(File(path), File(targetDirPath), isRoot, _operationProgress)
+                if (!res.success) {
+                    _appLogs.value += "\n[Error Salin File $path] ${res.error}\n"
                 }
             }
             withContext(Dispatchers.Main) {
@@ -787,27 +730,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
             for (path in selectedPaths) {
-                try {
-                    if (isRoot) {
-                        val res = RootUtils.executeCommand("mv \"$path\" \"$targetDirPath/\"", true)
-                        if (!res.success) {
-                            _appLogs.value += "\n[Error Pindah File] ${res.error}\n"
-                        }
-                    } else {
-                        val source = File(path)
-                        val dest = File(targetDirPath, source.name)
-                        if (!source.renameTo(dest)) {
-                            if (source.isDirectory) {
-                                source.copyRecursively(dest, overwrite = true)
-                                source.deleteRecursively()
-                            } else {
-                                source.copyTo(dest, overwrite = true)
-                                source.delete()
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    _appLogs.value += "\n[Error Pindah File $path] ${e.localizedMessage ?: e.message}\n"
+                val res = FileManager.moveFileItem(File(path), File(targetDirPath), isRoot, _operationProgress)
+                if (!res.success) {
+                    _appLogs.value += "\n[Error Pindah File $path] ${res.error}\n"
                 }
             }
             withContext(Dispatchers.Main) {
@@ -824,22 +749,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val isRoot = _isRootEnabled.value
             for (path in selectedPaths) {
-                try {
-                    if (isRoot) {
-                        val res = RootUtils.executeCommand("rm -rf \"$path\"", true)
-                        if (!res.success) {
-                            _appLogs.value += "\n[Error Hapus File] ${res.error}\n"
-                        }
-                    } else {
-                        val file = File(path)
-                        if (file.isDirectory) {
-                            file.deleteRecursively()
-                        } else {
-                            file.delete()
-                        }
-                    }
-                } catch (e: Exception) {
-                    _appLogs.value += "\n[Error Hapus File $path] ${e.localizedMessage ?: e.message}\n"
+                val res = FileManager.deleteFileItem(File(path), isRoot, _operationProgress)
+                if (!res.success) {
+                    _appLogs.value += "\n[Error Hapus File $path] ${res.error}\n"
                 }
             }
             withContext(Dispatchers.Main) {

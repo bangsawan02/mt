@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -142,7 +143,7 @@ fun FilePanelColumn(
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(displayFiles) { file ->
+                    items(displayFiles, key = { it.path }) { file ->
                         val isSelected = selectedPaths.contains(file.path)
                         FileItemView(
                             file = file,
@@ -189,7 +190,7 @@ fun FilePanelColumn(
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = if (file.isDirectory) Icons.Default.Folder else if (file.isArchive) Icons.Default.FolderZip else Icons.Default.InsertDriveFile,
+                        imageVector = if (file.isDirectory) Icons.Default.Folder else if (file.isArchive) Icons.Default.FolderZip else Icons.AutoMirrored.Filled.InsertDriveFile,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
@@ -238,7 +239,7 @@ fun FilePanelColumn(
                             ListItem(
                                 headlineContent = { Text("Ekstrak ke Panel Sebelah") },
                                 supportingContent = { Text(oppositePath, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp) },
-                                leadingContent = { Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = Color(0xFF00796B)) },
+                                leadingContent = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = Color(0xFF00796B)) },
                                 modifier = Modifier.clickable {
                                     val target = file
                                     itemToOptions = null
@@ -340,7 +341,7 @@ fun FilePanelColumn(
                         ListItem(
                             headlineContent = { Text("Pindahkan ke Panel Sebelah") },
                             supportingContent = { Text(oppositePath, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp) },
-                            leadingContent = { Icon(Icons.Default.Input, contentDescription = null, tint = Color(0xFF00796B)) },
+                            leadingContent = { Icon(Icons.AutoMirrored.Filled.Input, contentDescription = null, tint = Color(0xFF00796B)) },
                             modifier = Modifier.clickable {
                                 val target = file
                                 itemToOptions = null

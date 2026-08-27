@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import android.content.Context
 import android.widget.Toast
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -52,7 +54,7 @@ fun HexEditorScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
-    val isRootEnabled by viewModel.isRootEnabled.collectAsState()
+    val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
 
     var fileData by remember { mutableStateOf<ByteArray?>(null) }
     var originalData by remember { mutableStateOf<ByteArray?>(null) }
@@ -144,7 +146,7 @@ fun HexEditorScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { viewModel.navigateToExplorer() }) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Kembali")
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
                     }
                 },
                 actions = {

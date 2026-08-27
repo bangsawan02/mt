@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -13,7 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,9 +47,9 @@ fun CodeEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val content by viewModel.editorContent.collectAsState()
-    val title by viewModel.editorTitle.collectAsState()
-    val query by viewModel.searchQuery.collectAsState()
+    val content by viewModel.editorContent.collectAsStateWithLifecycle()
+    val title by viewModel.editorTitle.collectAsStateWithLifecycle()
+    val query by viewModel.searchQuery.collectAsStateWithLifecycle()
 
     // Text & Selection state
     var textFieldValue by remember { mutableStateOf(TextFieldValue(text = "")) }
@@ -298,7 +299,7 @@ fun CodeEditorScreen(
                             enabled = undoRedoManager.canUndo() && !isReadOnly
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Undo,
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
                                 contentDescription = "Urungkan (Undo)",
                                 tint = if (undoRedoManager.canUndo() && !isReadOnly) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                             )
@@ -315,7 +316,7 @@ fun CodeEditorScreen(
                             enabled = undoRedoManager.canRedo() && !isReadOnly
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Redo,
+                                imageVector = Icons.AutoMirrored.Filled.Redo,
                                 contentDescription = "Ulangi (Redo)",
                                 tint = if (undoRedoManager.canRedo() && !isReadOnly) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                             )
@@ -410,7 +411,7 @@ fun CodeEditorScreen(
                             label = { Text("Wrap", fontSize = 11.sp) },
                             leadingIcon = {
                                 Icon(
-                                    imageVector = Icons.Default.WrapText,
+                                    imageVector = Icons.AutoMirrored.Filled.WrapText,
                                     contentDescription = "Bungkus Baris",
                                     modifier = Modifier.size(14.dp)
                                 )
