@@ -81,7 +81,7 @@ fun ConsoleView(viewModel: EditorViewModel) {
             ) {
                 val scrollState = rememberScrollState()
                 LaunchedEffect(logs.length) {
-                    scrollState.animateScrollTo(scrollState.maxValue)
+                    scrollState.scrollTo(scrollState.maxValue)
                 }
                 Text(
                     text = logs.ifEmpty { stringResource(R.string.no_logs_available) },

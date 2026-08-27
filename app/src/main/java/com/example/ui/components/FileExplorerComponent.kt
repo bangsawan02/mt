@@ -94,34 +94,47 @@ fun FilePanelColumn(
             .fillMaxSize()
             .background(Color.White) // MT Manager classic clean white background
     ) {
-        // Filter Bar (Compact & Elegant)
-        if (filterQuery.isNotEmpty() || files.size > 25) {
-            OutlinedTextField(
-                value = filterQuery,
-                onValueChange = { filterQuery = it },
-                placeholder = { Text(stringResource(R.string.filter_directory), fontSize = 11.sp, color = Color.Gray) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = Color.Gray
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                    .height(38.dp),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF1976D2),
-                    unfocusedBorderColor = Color(0xFFE0E0E0),
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color(0xFFFAFAFA)
-                ),
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Color.Black)
-            )
-        }
+        // Filter & Search Bar (Always visible for filtering files and folders by name in the current directory)
+        OutlinedTextField(
+            value = filterQuery,
+            onValueChange = { filterQuery = it },
+            placeholder = { Text(stringResource(R.string.filter_directory), fontSize = 11.sp, color = Color.Gray) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    modifier = Modifier.size(16.dp),
+                    tint = Color.Gray
+                )
+            },
+            trailingIcon = {
+                if (filterQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = { filterQuery = "" },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Clear search",
+                            modifier = Modifier.size(14.dp),
+                            tint = Color.Gray
+                        )
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+                .height(38.dp),
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF1976D2),
+                unfocusedBorderColor = Color(0xFFE0E0E0),
+                focusedContainerColor = Color.White,
+                unfocusedContainerColor = Color(0xFFFAFAFA)
+            ),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = Color.Black)
+        )
 
         // File List
         Box(modifier = Modifier.weight(1f)) {

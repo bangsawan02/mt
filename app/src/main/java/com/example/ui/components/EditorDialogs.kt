@@ -397,7 +397,7 @@ fun RootMountDialog(
                 ) {
                     val logScrollState = rememberScrollState()
                     LaunchedEffect(rootOperationLogs.length) {
-                        logScrollState.animateScrollTo(logScrollState.maxValue)
+                        logScrollState.scrollTo(logScrollState.maxValue)
                     }
                     Text(
                         text = rootOperationLogs.ifEmpty { "Console output logs..." },
@@ -513,7 +513,7 @@ fun TerminalDialog(
                 ) {
                     val scrollState = rememberScrollState()
                     LaunchedEffect(terminalLogs.length) {
-                        scrollState.animateScrollTo(scrollState.maxValue)
+                        scrollState.scrollTo(scrollState.maxValue)
                     }
                     Text(
                         text = terminalLogs.ifEmpty { "Terminal output...\n" },
