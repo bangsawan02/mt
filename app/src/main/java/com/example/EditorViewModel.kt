@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +63,48 @@ data class ComparisonLine(
 enum class LineDiffType { MATCH, DIFFERENT, ONLY_A, ONLY_B }
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val db = com.example.data.AppDatabase.getDatabase(application)
+    private val settingsDataStore = com.example.data.SettingsDataStore(application)
+
+    // Persistent Code Editor Settings
+    val wordWrapFlow = settingsDataStore.wordWrapFlow
+    val fontSizeSpFlow = settingsDataStore.fontSizeFlow
+    val themeModeFlow = settingsDataStore.themeModeFlow
+
+    fun setWordWrap(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.saveWordWrap(enabled)
+        }
+    }
+
+    fun setFontSize(size: Int) {
+        viewModelScope.launch {
+            settingsDataStore.saveFontSize(size)
+        }
+    }
+
+    fun setThemeMode(mode: String) {
+        viewModelScope.launch {
+            settingsDataStore.saveThemeMode(mode)
+        }
+    }
+
+    private fun updatePathAndSave(panel: PanelType, path: String) {
+        if (panel == PanelType.LEFT) {
+            _leftPath.value = path
+            loadFiles(PanelType.LEFT)
+            viewModelScope.launch {
+                settingsDataStore.saveLeftPanelPath(path)
+            }
+        } else {
+            _rightPath.value = path
+            loadFiles(PanelType.RIGHT)
+            viewModelScope.launch {
+                settingsDataStore.saveRightPanelPath(path)
+            }
+        }
+    }
 
     private val _isRootEnabled = MutableStateFlow(false)
     val isRootEnabled: StateFlow<Boolean> = _isRootEnabled.asStateFlow()
@@ -221,14 +264,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (panel == PanelType.LEFT) {
             if (leftHistoryIndex > 0) {
                 leftHistoryIndex--
-                _leftPath.value = leftHistory[leftHistoryIndex]
-                loadFiles(PanelType.LEFT)
+                updatePathAndSave(PanelType.LEFT, leftHistory[leftHistoryIndex])
             }
         } else {
             if (rightHistoryIndex > 0) {
                 rightHistoryIndex--
-                _rightPath.value = rightHistory[rightHistoryIndex]
-                loadFiles(PanelType.RIGHT)
+                updatePathAndSave(PanelType.RIGHT, rightHistory[rightHistoryIndex])
             }
         }
     }
@@ -237,14 +278,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (panel == PanelType.LEFT) {
             if (leftHistoryIndex < leftHistory.size - 1) {
                 leftHistoryIndex++
-                _leftPath.value = leftHistory[leftHistoryIndex]
-                loadFiles(PanelType.LEFT)
+                updatePathAndSave(PanelType.LEFT, leftHistory[leftHistoryIndex])
             }
         } else {
             if (rightHistoryIndex < rightHistory.size - 1) {
                 rightHistoryIndex++
-                _rightPath.value = rightHistory[rightHistoryIndex]
-                loadFiles(PanelType.RIGHT)
+                updatePathAndSave(PanelType.RIGHT, rightHistory[rightHistoryIndex])
             }
         }
     }
@@ -360,9 +399,57 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             _isRootAvailable.value = RootUtils.isRootAvailable()
+            
+            // Restore last paths and panel selections on startup
+            try {
+                val restoredLeft = settingsDataStore.leftPanelPathFlow.first()
+                if (!restoredLeft.isNullOrEmpty() && File(restoredLeft).exists()) {
+                    _leftPath.value = restoredLeft
+                    leftHistory.clear()
+                    leftHistoryIndex = -1
+                    addToHistory(PanelType.LEFT, restoredLeft)
+                }
+            } catch (_: Exception) {}
+
+            try {
+                val restoredRight = settingsDataStore.rightPanelPathFlow.first()
+                if (!restoredRight.isNullOrEmpty() && File(restoredRight).exists()) {
+                    _rightPath.value = restoredRight
+                    rightHistory.clear()
+                    rightHistoryIndex = -1
+                    addToHistory(PanelType.RIGHT, restoredRight)
+                }
+            } catch (_: Exception) {}
+
+            try {
+                val restoredPanelName = settingsDataStore.activePanelFlow.first()
+                if (!restoredPanelName.isNullOrEmpty()) {
+                    _activePanel.value = PanelType.valueOf(restoredPanelName)
+                }
+            } catch (_: Exception) {}
+
             loadFiles(PanelType.LEFT)
             loadFiles(PanelType.RIGHT)
         }
+
+        // Initialize persistent configurations from DataStore
+        viewModelScope.launch {
+            settingsDataStore.rootModeFlow.collect { enabled ->
+                if (_isRootEnabled.value != enabled) {
+                    _isRootEnabled.value = enabled
+                    refreshAll()
+                }
+            }
+        }
+
+        // Initialize dynamic bookmarks from Room database
+        viewModelScope.launch {
+            db.bookmarkDao().getAllBookmarksFlow().collect { entities ->
+                val customPaths = entities.map { it.path }
+                _bookmarks.value = defaultBookmarks + customPaths
+            }
+        }
+
         startLogcatCapture()
     }
 
@@ -411,11 +498,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setRootEnabled(enabled: Boolean) {
         _isRootEnabled.value = enabled
+        viewModelScope.launch {
+            settingsDataStore.saveRootMode(enabled)
+        }
         refreshAll()
     }
 
     fun setActivePanel(panel: PanelType) {
         _activePanel.value = panel
+        viewModelScope.launch {
+            settingsDataStore.saveActivePanel(panel.name)
+        }
     }
 
     fun navigateToExplorer() {
@@ -439,28 +532,32 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Bookmarks & Quick Access
-    private val _bookmarks = MutableStateFlow<List<String>>(
-        listOf(
-            Environment.getExternalStorageDirectory().absolutePath,
-            File(Environment.getExternalStorageDirectory(), "Download").absolutePath,
-            File(Environment.getExternalStorageDirectory(), "DCIM").absolutePath,
-            File(Environment.getExternalStorageDirectory(), "Pictures").absolutePath,
-            File(Environment.getExternalStorageDirectory(), "Documents").absolutePath,
-            "/system",
-            "/data/app",
-            "/"
-        )
+    val defaultBookmarks = listOf(
+        Environment.getExternalStorageDirectory().absolutePath,
+        File(Environment.getExternalStorageDirectory(), "Download").absolutePath,
+        File(Environment.getExternalStorageDirectory(), "DCIM").absolutePath,
+        File(Environment.getExternalStorageDirectory(), "Pictures").absolutePath,
+        File(Environment.getExternalStorageDirectory(), "Documents").absolutePath,
+        "/system",
+        "/data/app",
+        "/"
     )
+
+    private val _bookmarks = MutableStateFlow<List<String>>(defaultBookmarks)
     val bookmarks: StateFlow<List<String>> = _bookmarks.asStateFlow()
 
     fun addBookmark(path: String) {
-        if (!_bookmarks.value.contains(path)) {
-            _bookmarks.value = _bookmarks.value + path
+        if (!defaultBookmarks.contains(path)) {
+            viewModelScope.launch(Dispatchers.IO) {
+                db.bookmarkDao().insertBookmark(com.example.data.BookmarkEntity(path))
+            }
         }
     }
 
     fun removeBookmark(path: String) {
-        _bookmarks.value = _bookmarks.value.filter { it != path }
+        viewModelScope.launch(Dispatchers.IO) {
+            db.bookmarkDao().deleteByPath(path)
+        }
     }
 
     fun openHexEditor(filePath: String) {
@@ -480,15 +577,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadPath(panel: PanelType, path: String) {
-        if (panel == PanelType.LEFT) {
-            _leftPath.value = path
-            addToHistory(PanelType.LEFT, path)
-            loadFiles(PanelType.LEFT)
-        } else {
-            _rightPath.value = path
-            addToHistory(PanelType.RIGHT, path)
-            loadFiles(PanelType.RIGHT)
-        }
+        addToHistory(panel, path)
+        updatePathAndSave(panel, path)
     }
 
     fun loadFiles(panel: PanelType) {

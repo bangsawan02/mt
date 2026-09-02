@@ -74,8 +74,13 @@ import com.example.ui.components.DoublePanelView
 import com.example.ui.components.CompareViewScreen
 import com.example.ui.components.ApkInspectorScreen
 import com.example.ui.components.BookmarksDrawer
-import com.example.ui.components.ConsoleView
 import com.example.ui.theme.MyApplicationTheme
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -83,8 +88,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme {
-                MainAppScreen()
+            val viewModel: EditorViewModel = viewModel()
+            val themeMode by viewModel.themeModeFlow.collectAsStateWithLifecycle(initialValue = "System")
+            val darkTheme = when (themeMode) {
+                "Dark" -> true
+                "Light" -> false
+                else -> isSystemInDarkTheme()
+            }
+            MyApplicationTheme(darkTheme = darkTheme) {
+                MainAppScreen(viewModel)
             }
         }
     }
@@ -113,6 +125,8 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
     // Dialog state variables defined here at screen-level
     var showRootMountDialog by remember { mutableStateOf(false) }
     var showTerminalDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    val themeMode by viewModel.themeModeFlow.collectAsStateWithLifecycle(initialValue = "System")
     var checksumFileTarget by remember { mutableStateOf<FileItem?>(null) }
     var apkSignTarget by remember { mutableStateOf<FileItem?>(null) }
     var showBookmarksDrawer by remember { mutableStateOf(false) }
@@ -371,6 +385,15 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                             )
 
                             DropdownMenuItem(
+                                text = { Text("Tema Aplikasi ($themeMode)", color = Color.Black) },
+                                leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = Color.DarkGray) },
+                                onClick = {
+                                    showMenuDropdown = false
+                                    showThemeDialog = true
+                                }
+                            )
+
+                            DropdownMenuItem(
                                 text = { Text("Refresh", color = Color.Black) },
                                 leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.DarkGray) },
                                 onClick = {
@@ -394,62 +417,70 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (val view = activeView) {
-                is ActiveView.Explorer -> {
-                    DoublePanelView(
-                        viewModel = viewModel,
-                        onShowChecksum = { item -> checksumFileTarget = item },
-                        onSignApk = { item -> apkSignTarget = item }
-                    )
-                }
-                is ActiveView.TextEditor -> {
-                    CodeEditorScreen(
-                        filePath = view.filePath,
-                        isNewFile = view.isNewFile,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.CompareView -> {
-                    CompareViewScreen(
-                        fileAPath = view.fileAPath,
-                        fileBPath = view.fileBPath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.ApkInspector -> {
-                    ApkInspectorScreen(
-                        apkPath = view.apkPath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.PhotoEditor -> {
-                    PhotoEditorView(
-                        filePath = view.filePath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.ArchiveViewer -> {
-                    ArchiveViewerScreen(
-                        archivePath = view.archivePath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.HexEditor -> {
-                    HexEditorScreen(
-                        filePath = view.filePath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.VideoPlayer -> {
-                    VideoPlayerScreen(
-                        filePath = view.filePath,
-                        viewModel = viewModel
-                    )
-                }
-                is ActiveView.AppManager -> {
-                    AppManagerScreen(
-                        viewModel = viewModel
-                    )
+            AnimatedContent(
+                targetState = activeView,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(220))
+                },
+                label = "ScreenTransition"
+            ) { view ->
+                when (view) {
+                    is ActiveView.Explorer -> {
+                        DoublePanelView(
+                            viewModel = viewModel,
+                            onShowChecksum = { item -> checksumFileTarget = item },
+                            onSignApk = { item -> apkSignTarget = item }
+                        )
+                    }
+                    is ActiveView.TextEditor -> {
+                        CodeEditorScreen(
+                            filePath = view.filePath,
+                            isNewFile = view.isNewFile,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.CompareView -> {
+                        CompareViewScreen(
+                            fileAPath = view.fileAPath,
+                            fileBPath = view.fileBPath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.ApkInspector -> {
+                        ApkInspectorScreen(
+                            apkPath = view.apkPath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.PhotoEditor -> {
+                        PhotoEditorView(
+                            filePath = view.filePath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.ArchiveViewer -> {
+                        ArchiveViewerScreen(
+                            archivePath = view.archivePath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.HexEditor -> {
+                        HexEditorScreen(
+                            filePath = view.filePath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.VideoPlayer -> {
+                        VideoPlayerScreen(
+                            filePath = view.filePath,
+                            viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.AppManager -> {
+                        AppManagerScreen(
+                            viewModel = viewModel
+                        )
+                    }
                 }
             }
 
@@ -458,15 +489,10 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
             if (operationProgress != null) {
                 LinearProgressIndicator(
                     progress = { operationProgress!! },
-                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(bottom = 40.dp), // slightly above console handle
+                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
                     color = MaterialTheme.colorScheme.secondary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 )
-            }
-
-            // Integrated Console / Operation Logs at the bottom
-            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                ConsoleView(viewModel = viewModel)
             }
         }
     }
@@ -525,6 +551,41 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
             leftPath = leftPath,
             rightPath = rightPath,
             onDismiss = { showBookmarksDrawer = false }
+        )
+    }
+
+    if (showThemeDialog) {
+        val themeOptions = listOf("System", "Light", "Dark")
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Pilih Tema Aplikasi", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column {
+                    themeOptions.forEach { option ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setThemeMode(option)
+                                }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            RadioButton(
+                                selected = (themeMode == option),
+                                onClick = { viewModel.setThemeMode(option) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = option, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text("Selesai")
+                }
+            }
         )
     }
 }

@@ -51,7 +51,7 @@ data class InstalledAppItem(
     val versionCode: Long,
     val sourceDir: String,
     val isSystemApp: Boolean,
-    val icon: Drawable?,
+    val iconBitmap: android.graphics.Bitmap?,
     val fileSize: Long
 )
 
@@ -90,6 +90,21 @@ fun AppManagerScreen(
                     val file = File(sourceApk)
                     val size = if (file.exists()) file.length() else 0L
 
+                    val iconDrawable = try { pm.getApplicationIcon(appInfo) } catch (_: Exception) { null }
+                    val iconBmp = iconDrawable?.let { drawable ->
+                        try {
+                            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
+                            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
+                            val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bitmap)
+                            drawable.setBounds(0, 0, canvas.width, canvas.height)
+                            drawable.draw(canvas)
+                            android.graphics.Bitmap.createScaledBitmap(bitmap, 96, 96, true)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+
                     InstalledAppItem(
                         appName = appName,
                         packageName = pkg.packageName,
@@ -102,7 +117,7 @@ fun AppManagerScreen(
                         },
                         sourceDir = sourceApk,
                         isSystemApp = isSystem,
-                        icon = try { pm.getApplicationIcon(appInfo) } catch (_: Exception) { null },
+                        iconBitmap = iconBmp,
                         fileSize = size
                     )
                 } catch (e: Exception) {
@@ -258,9 +273,9 @@ fun AppManagerScreen(
             onDismissRequest = { selectedAppForDetails = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (app.icon != null) {
+                    if (app.iconBitmap != null) {
                         Image(
-                            bitmap = app.icon.toBitmap(48, 48).asImageBitmap(),
+                            bitmap = app.iconBitmap.asImageBitmap(),
                             contentDescription = null,
                             modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
                         )
@@ -343,9 +358,9 @@ private fun AppListItem(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (app.icon != null) {
+        if (app.iconBitmap != null) {
             Image(
-                bitmap = app.icon.toBitmap(48, 48).asImageBitmap(),
+                bitmap = app.iconBitmap.asImageBitmap(),
                 contentDescription = app.appName,
                 modifier = Modifier
                     .size(42.dp)

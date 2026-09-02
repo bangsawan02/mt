@@ -3,10 +3,10 @@ package com.example
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.channels.FileChannel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
-import com.topjohnwu.superuser.Shell
 
 object FileManager {
 
@@ -17,11 +17,11 @@ object FileManager {
         progressFlow: MutableStateFlow<Float?>
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
-            progressFlow.value = null // Root shell cp doesn't give easy progress
-            val res = Shell.cmd("cp -rf \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"").exec()
-            val success = res.isSuccess
-            val err = res.err.joinToString("\n")
-            return@withContext CommandResult(success, if(success) 0 else -1, res.out.joinToString("\n"), err)
+            progressFlow.value = null
+            return@withContext RootUtils.executeCommand(
+                "cp -rf \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"",
+                runAsRoot = true
+            )
         } else {
             try {
                 if (source.isDirectory) {
@@ -35,39 +35,37 @@ object FileManager {
                         val targetFile = File(File(targetDir, source.name), relativePath)
                         targetFile.parentFile?.mkdirs()
 
-                        val inChannel = FileInputStream(file).channel
-                        val outChannel = FileOutputStream(targetFile).channel
-                        val size = inChannel.size()
-                        var currentPos = 0L
-
-                        while (currentPos < size) {
-                            val count = inChannel.transferTo(currentPos, 1024 * 1024L, outChannel) // 1MB chunks
-                            if (count <= 0) break
-                            currentPos += count
-                            copiedBytes += count
-                            progressFlow.value = if (totalBytes > 0) copiedBytes.toFloat() / totalBytes.toFloat() else 1f
+                        FileInputStream(file).channel.use { inChannel ->
+                            FileOutputStream(targetFile).channel.use { outChannel ->
+                                val size = inChannel.size()
+                                var currentPos = 0L
+                                while (currentPos < size) {
+                                    val count = inChannel.transferTo(currentPos, 1024 * 1024L, outChannel) // 1MB chunks
+                                    if (count <= 0) break
+                                    currentPos += count
+                                    copiedBytes += count
+                                    progressFlow.value = if (totalBytes > 0) copiedBytes.toFloat() / totalBytes.toFloat() else 1f
+                                }
+                            }
                         }
-                        inChannel.close()
-                        outChannel.close()
                     }
                     progressFlow.value = null
                     return@withContext CommandResult(true, 0, "", "")
                 } else {
                     progressFlow.value = 0f
                     val dest = File(targetDir, source.name)
-                    val inChannel = FileInputStream(source).channel
-                    val outChannel = FileOutputStream(dest).channel
-                    val size = inChannel.size()
-                    var currentPos = 0L
-
-                    while (currentPos < size) {
-                        val count = inChannel.transferTo(currentPos, 1024 * 1024L, outChannel) // 1MB chunks
-                        if (count <= 0) break
-                        currentPos += count
-                        progressFlow.value = if (size > 0) currentPos.toFloat() / size.toFloat() else 1f
+                    FileInputStream(source).channel.use { inChannel ->
+                        FileOutputStream(dest).channel.use { outChannel ->
+                            val size = inChannel.size()
+                            var currentPos = 0L
+                            while (currentPos < size) {
+                                val count = inChannel.transferTo(currentPos, 1024 * 1024L, outChannel) // 1MB chunks
+                                if (count <= 0) break
+                                currentPos += count
+                                progressFlow.value = if (size > 0) currentPos.toFloat() / size.toFloat() else 1f
+                            }
+                        }
                     }
-                    inChannel.close()
-                    outChannel.close()
                     progressFlow.value = null
                     return@withContext CommandResult(true, 0, "", "")
                 }
@@ -86,16 +84,17 @@ object FileManager {
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
             progressFlow.value = null
-            val res = Shell.cmd("mv -f \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"").exec()
-            return@withContext CommandResult(res.isSuccess, if(res.isSuccess) 0 else -1, res.out.joinToString("\n"), res.err.joinToString("\n"))
+            return@withContext RootUtils.executeCommand(
+                "mv -f \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"",
+                runAsRoot = true
+            )
         } else {
             try {
-                progressFlow.value = null // Move is usually instantaneous on same FS
+                progressFlow.value = null
                 val dest = File(targetDir, source.name)
                 val success = source.renameTo(dest)
                 if (!success) {
-                    // Fallback to copy then delete
-                    val copyRes = FileManager.copyFileItem(source, targetDir, false, progressFlow)
+                    val copyRes = copyFileItem(source, targetDir, false, progressFlow)
                     if (copyRes.success) source.deleteRecursively()
                     return@withContext copyRes
                 }
@@ -113,16 +112,19 @@ object FileManager {
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
             progressFlow.value = null
-            val res = Shell.cmd("rm -rf \"${target.absolutePath}\"").exec()
-            return@withContext CommandResult(res.isSuccess, if(res.isSuccess) 0 else -1, res.out.joinToString("\n"), res.err.joinToString("\n"))
+            return@withContext RootUtils.executeCommand(
+                "rm -rf \"${target.absolutePath}\"",
+                runAsRoot = true
+            )
         } else {
             try {
                 progressFlow.value = null
                 val success = target.deleteRecursively()
-                return@withContext CommandResult(success, 0, "", if (success) "" else "Failed to delete")
+                return@withContext CommandResult(success, if (success) 0 else -1, "", if (success) "" else "Failed to delete")
             } catch (e: Exception) {
                 return@withContext CommandResult(false, -1, "", e.localizedMessage ?: "Unknown error")
             }
         }
     }
 }
+

@@ -746,6 +746,7 @@ fun ThumbnailIcon(
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+
     var thumbnailBitmap by remember(file.path) {
         mutableStateOf<android.graphics.Bitmap?>(ThumbnailCache.get(file.path))
     }
@@ -761,8 +762,19 @@ fun ThumbnailIcon(
                                 inJustDecodeBounds = true
                             }
                             android.graphics.BitmapFactory.decodeFile(file.path, options)
-                            options.inSampleSize = calculateInSampleSize(options, 96, 96)
+                            // Target thumbnail size of ~64dp (scaled down)
+                            val targetWidth = 128
+                            val targetHeight = 128
+                            var scale = 1
+                            if (options.outHeight > targetHeight || options.outWidth > targetWidth) {
+                                val halfHeight = options.outHeight / 2
+                                val halfWidth = options.outWidth / 2
+                                while ((halfHeight / scale) >= targetHeight && (halfWidth / scale) >= targetWidth) {
+                                    scale *= 2
+                                }
+                            }
                             options.inJustDecodeBounds = false
+                            options.inSampleSize = scale
                             bmp = android.graphics.BitmapFactory.decodeFile(file.path, options)
                         }
                         file.isApk -> {

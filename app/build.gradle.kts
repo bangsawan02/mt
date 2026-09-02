@@ -58,7 +58,7 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      signingConfig = signingConfigs.getByName("debugConfig")
     }
     debug {
       isMinifyEnabled = false
@@ -105,7 +105,6 @@ secrets {
 
 // Dependencies
 dependencies {
-  implementation(libs.libsu.core)
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)
@@ -124,6 +123,13 @@ dependencies {
   implementation(libs.androidx.media3.ui)
   implementation("com.android.tools.build:apksig:8.3.0")
   
+  // Recommended Libraries Added:
+  implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  ksp(libs.androidx.room.compiler)
+  implementation(libs.androidx.datastore.preferences)
+
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
 }

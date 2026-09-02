@@ -89,8 +89,8 @@ fun CodeEditorScreen(
     var replaceQuery by remember { mutableStateOf("") }
     var isCaseSensitive by remember { mutableStateOf(false) }
     var isRegexSearch by remember { mutableStateOf(false) }
-    var wordWrap by remember { mutableStateOf(false) }
-    var fontSizeSp by remember { mutableIntStateOf(14) }
+    val wordWrap by viewModel.wordWrapFlow.collectAsStateWithLifecycle(initialValue = false)
+    val fontSizeSp by viewModel.fontSizeSpFlow.collectAsStateWithLifecycle(initialValue = 14)
     var showGoToLineDialog by remember { mutableStateOf(false) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var gotoLineInput by remember { mutableStateOf("") }
@@ -484,7 +484,7 @@ fun CodeEditorScreen(
                         // Word Wrap Toggle
                         FilterChip(
                             selected = wordWrap,
-                            onClick = { wordWrap = !wordWrap },
+                            onClick = { viewModel.setWordWrap(!wordWrap) },
                             label = { Text("Wrap", fontSize = 11.sp) },
                             leadingIcon = {
                                 Icon(
@@ -535,13 +535,13 @@ fun CodeEditorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${fontSizeSp}sp", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         IconButton(
-                            onClick = { if (fontSizeSp > 10) fontSizeSp -= 2 },
+                            onClick = { if (fontSizeSp > 10) viewModel.setFontSize(fontSizeSp - 2) },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Text("A-", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         IconButton(
-                            onClick = { if (fontSizeSp < 28) fontSizeSp += 2 },
+                            onClick = { if (fontSizeSp < 28) viewModel.setFontSize(fontSizeSp + 2) },
                             modifier = Modifier.size(28.dp)
                         ) {
                             Text("A+", fontWeight = FontWeight.Bold, fontSize = 12.sp)
