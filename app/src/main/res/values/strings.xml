@@ -60,4 +60,11 @@
     <string name="move_to_opposite">Pindahkan ke Panel Sebelah</string>
     <string name="compress_zip">Kompres ke ZIP</string>
     <string name="delete_multiple_confirm">Apakah Anda yakin ingin menghapus %1$d item terpilih? Tindakan ini tidak dapat dibatalkan.</string>
+    <string name="native_storage_browser">Penjelajah Storage &amp; DocumentFile</string>
+    <string name="storage_volumes">Volume Penyimpanan</string>
+    <string name="open_saf_tree">Buka Folder SAF / Tree</string>
+    <string name="primary_storage">Penyimpanan Utama</string>
+    <string name="removable_storage">Penyimpanan Eksternal / SD</string>
+    <string name="read_only">Hanya Baca</string>
+    <string name="read_write">Baca / Tulis</string>
 </resources>

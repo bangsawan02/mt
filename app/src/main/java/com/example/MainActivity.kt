@@ -66,6 +66,7 @@ import com.example.ui.components.ArchiveProgressDialog
 import com.example.ui.components.HexEditorScreen
 import com.example.ui.components.VideoPlayerScreen
 import com.example.ui.components.AppManagerScreen
+import com.example.ui.components.NativeStorageBrowserScreen
 import com.example.ui.components.ChecksumViewerDialog
 import com.example.ui.components.ApkSignerDialog
 import com.example.ui.components.RootMountDialog
@@ -158,6 +159,10 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
     }
 
     BackHandler(enabled = activeView is ActiveView.AppManager) {
+        viewModel.navigateToExplorer()
+    }
+
+    BackHandler(enabled = activeView is ActiveView.StorageBrowser) {
         viewModel.navigateToExplorer()
     }
 
@@ -479,6 +484,12 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                     is ActiveView.AppManager -> {
                         AppManagerScreen(
                             viewModel = viewModel
+                        )
+                    }
+                    is ActiveView.StorageBrowser -> {
+                        NativeStorageBrowserScreen(
+                            viewModel = viewModel,
+                            onNavigateBack = { viewModel.navigateToExplorer() }
                         )
                     }
                 }

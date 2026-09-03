@@ -39,6 +39,7 @@ sealed interface ActiveView {
     data class HexEditor(val filePath: String) : ActiveView
     data class VideoPlayer(val filePath: String) : ActiveView
     object AppManager : ActiveView
+    object StorageBrowser : ActiveView
 }
 
 data class FileItem(
@@ -566,6 +567,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openAppManager() {
         _activeView.value = ActiveView.AppManager
+    }
+
+    fun openStorageBrowser() {
+        _activeView.value = ActiveView.Explorer
     }
 
     fun openPhotoEditor(filePath: String) {
