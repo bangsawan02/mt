@@ -95,11 +95,10 @@ fun CodeEditorScreen(
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var gotoLineInput by remember { mutableStateOf("") }
     var activeMatchIndex by remember { mutableIntStateOf(0) }
-    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    // Synchronized scroll states
-    val verticalScrollState = rememberScrollState()
-    val horizontalScrollState = rememberScrollState()
+    // Reference to native editor view
+    var nativeEditorRef by remember { mutableStateOf<NativeCodeEditorView?>(null) }
+    var nativeCursorMetrics by remember { mutableStateOf(Triple(1, 1, 0)) }
 
     // Intercept back button if there are unsaved changes
     BackHandler(enabled = !isSaved) {
@@ -107,29 +106,34 @@ fun CodeEditorScreen(
     }
 
     // Helper function to update text and track undo history
-    fun updateText(newVal: TextFieldValue) {
+    fun updateText(newText: String, pushUndo: Boolean = true) {
         if (isReadOnly) return
-        if (newVal.text != textFieldValue.text) {
-            undoRedoManager.pushState(textFieldValue.text)
+        if (newText != textFieldValue.text) {
+            if (pushUndo) {
+                undoRedoManager.pushState(textFieldValue.text)
+            }
             isSaved = false
+            textFieldValue = TextFieldValue(text = newText)
+            nativeEditorRef?.setTextContent(newText)
         }
-        textFieldValue = newVal
     }
 
     fun insertSymbol(symbol: String) {
         if (isReadOnly) return
-        val currentText = textFieldValue.text
-        val sel = textFieldValue.selection
-        val start = sel.min.coerceIn(0, currentText.length)
-        val end = sel.max.coerceIn(0, currentText.length)
-        val newText = currentText.substring(0, start) + symbol + currentText.substring(end)
-        val newCursor = start + symbol.length
-        updateText(
-            TextFieldValue(
-                text = newText,
-                selection = TextRange(newCursor)
-            )
-        )
+        nativeEditorRef?.insertTextAtCursor(symbol) ?: run {
+            val currentText = textFieldValue.text
+            val sel = textFieldValue.selection
+            val start = sel.min.coerceIn(0, currentText.length)
+            val end = sel.max.coerceIn(0, currentText.length)
+            val newText = currentText.substring(0, start) + symbol + currentText.substring(end)
+            val newCursor = start + symbol.length
+            val newVal = TextFieldValue(text = newText, selection = TextRange(newCursor))
+            if (newVal.text != textFieldValue.text) {
+                undoRedoManager.pushState(textFieldValue.text)
+                isSaved = false
+            }
+            textFieldValue = newVal
+        }
     }
 
     // Fast Line & Character metrics
@@ -142,84 +146,7 @@ fun CodeEditorScreen(
     }
 
     // Cursor position metrics (Line, Column, Selection size)
-    val cursorMetrics = remember(textFieldValue.selection, textFieldValue.text) {
-        val (line, col) = EditorOperations.calculateCursorMetrics(textFieldValue.text, textFieldValue.selection.start)
-        val selLen = textFieldValue.selection.length
-        Triple(line, col, selLen)
-    }
-
-    // High-Performance Gutter View Line Numbers with Active Line Highlight & Precision Wrap Alignment
-    val currentActiveLine = cursorMetrics.first
-    val activeLineColor = MaterialTheme.colorScheme.primary
-    val inactiveLineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-
-    val annotatedGutterText = remember(textFieldValue.text, lineCount, currentActiveLine, activeLineColor, inactiveLineColor, textLayoutResult, wordWrap) {
-        buildAnnotatedString {
-            val layout = textLayoutResult
-            if (layout == null || !wordWrap) {
-                // Standard 1-to-1 line number per text line
-                for (i in 1..lineCount) {
-                    if (i > 1) append("\n")
-                    if (i == currentActiveLine) {
-                        pushStyle(
-                            SpanStyle(
-                                color = activeLineColor,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-                        append("$i")
-                        pop()
-                    } else {
-                        pushStyle(
-                            SpanStyle(
-                                color = inactiveLineColor,
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
-                        append("$i")
-                        pop()
-                    }
-                }
-            } else {
-                // Dynamic wrapped line alignment using textLayoutResult
-                val textStr = textFieldValue.text
-                val lineList = textStr.split("\n")
-                var currentOffset = 0
-                var isFirst = true
-
-                for (lineIdx in lineList.indices) {
-                    val lineNum = lineIdx + 1
-                    val lineText = lineList[lineIdx]
-                    val startOffset = currentOffset
-                    val endOffset = (currentOffset + lineText.length).coerceAtMost(textStr.length)
-
-                    val startVisualLine = layout.getLineForOffset(startOffset)
-                    val endVisualLine = if (lineText.isEmpty()) startVisualLine else layout.getLineForOffset(endOffset)
-                    val visualLineCount = (endVisualLine - startVisualLine + 1).coerceAtLeast(1)
-
-                    if (!isFirst) append("\n")
-                    isFirst = false
-
-                    if (lineNum == currentActiveLine) {
-                        pushStyle(SpanStyle(color = activeLineColor, fontWeight = FontWeight.Bold))
-                        append("$lineNum")
-                        pop()
-                    } else {
-                        pushStyle(SpanStyle(color = inactiveLineColor, fontWeight = FontWeight.Medium))
-                        append("$lineNum")
-                        pop()
-                    }
-
-                    // Append blank newlines matching visual wrap lines
-                    for (v in 1 until visualLineCount) {
-                        append("\n")
-                    }
-
-                    currentOffset += lineText.length + 1
-                }
-            }
-        }
-    }
+    val cursorMetrics = nativeCursorMetrics
 
     // Search matches calculation
     val matches = remember(textFieldValue.text, query, isCaseSensitive, isRegexSearch) {
@@ -337,7 +264,7 @@ fun CodeEditorScreen(
                         IconButton(
                             onClick = {
                                 undoRedoManager.undo(textFieldValue.text)?.let { prev ->
-                                    textFieldValue = TextFieldValue(text = prev)
+                                    updateText(prev, pushUndo = false)
                                     isSaved = false
                                 }
                             },
@@ -354,7 +281,7 @@ fun CodeEditorScreen(
                         IconButton(
                             onClick = {
                                 undoRedoManager.redo()?.let { next ->
-                                    textFieldValue = TextFieldValue(text = next)
+                                    updateText(next, pushUndo = false)
                                     isSaved = false
                                 }
                             },
@@ -372,7 +299,7 @@ fun CodeEditorScreen(
                             onClick = {
                                 val (success, formatted) = CodeFormatter.format(textFieldValue.text, fileExt)
                                 if (success) {
-                                    updateText(TextFieldValue(text = formatted))
+                                    updateText(formatted)
                                     Toast.makeText(context, "Format kode selesai", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, formatted, Toast.LENGTH_SHORT).show()
@@ -605,9 +532,8 @@ fun CodeEditorScreen(
                                 if (matches.isNotEmpty()) {
                                     activeMatchIndex = (activeMatchIndex - 1 + matches.size) % matches.size
                                     val (start, end) = matches[activeMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = TextRange(start, end)
-                                    )
+                                    textFieldValue = textFieldValue.copy(selection = TextRange(start, end))
+                                    nativeEditorRef?.selectRange(start, end)
                                 }
                             },
                             enabled = matches.isNotEmpty(),
@@ -622,9 +548,8 @@ fun CodeEditorScreen(
                                 if (matches.isNotEmpty()) {
                                     activeMatchIndex = (activeMatchIndex + 1) % matches.size
                                     val (start, end) = matches[activeMatchIndex]
-                                    textFieldValue = textFieldValue.copy(
-                                        selection = TextRange(start, end)
-                                    )
+                                    textFieldValue = textFieldValue.copy(selection = TextRange(start, end))
+                                    nativeEditorRef?.selectRange(start, end)
                                 }
                             },
                             enabled = matches.isNotEmpty(),
@@ -680,12 +605,8 @@ fun CodeEditorScreen(
                                     val (start, end) = matches[safeIndex]
                                     val currentText = textFieldValue.text
                                     val newText = currentText.substring(0, start) + replaceQuery + currentText.substring(end)
-                                    updateText(
-                                        TextFieldValue(
-                                            text = newText,
-                                            selection = TextRange(start + replaceQuery.length)
-                                        )
-                                    )
+                                    updateText(newText)
+                                    nativeEditorRef?.selectRange(start, start + replaceQuery.length)
                                     Toast.makeText(context, "1 teks diganti", Toast.LENGTH_SHORT).show()
                                 }
                             },
@@ -710,7 +631,7 @@ fun CodeEditorScreen(
                                     } else {
                                         textFieldValue.text.replace(Regex(Regex.escape(query), RegexOption.IGNORE_CASE), replaceQuery)
                                     }
-                                    updateText(TextFieldValue(text = newText))
+                                    updateText(newText)
                                     Toast.makeText(context, "$count teks diganti", Toast.LENGTH_SHORT).show()
                                 }
                             },
@@ -725,101 +646,40 @@ fun CodeEditorScreen(
             }
         }
 
-        // --- 3. Main Code Canvas (Optimized Line Numbers + High-Performance BasicTextField Editor) ---
+        // --- 3. Main Code Canvas (High-Performance Native Android Code Editor with Line Gutter) ---
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            val lineHeight = (fontSizeSp * 1.5).sp
-
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(verticalScrollState)
-            ) {
-                // High-Performance Interactive Line Numbers Gutter View
-                AnimatedVisibility(visible = showGutter) {
-                    Row(modifier = Modifier.fillMaxHeight()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .clickable { showGoToLineDialog = true }
-                        ) {
-                            Text(
-                                text = annotatedGutterText,
-                                style = TextStyle(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = fontSizeSp.sp,
-                                    lineHeight = lineHeight,
-                                    textAlign = TextAlign.End
-                                ),
-                                modifier = Modifier
-                                    .padding(vertical = 4.dp, horizontal = 8.dp)
-                                    .widthIn(min = 36.dp)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .width(1.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                        )
+            NativeCodeEditorComposable(
+                content = textFieldValue.text,
+                fileExtension = fileExt,
+                searchQuery = query,
+                isCaseSensitive = isCaseSensitive,
+                wordWrap = wordWrap,
+                fontSizeSp = fontSizeSp,
+                isReadOnly = isReadOnly,
+                showGutter = showGutter,
+                onContentChange = { newText ->
+                    if (!isReadOnly && newText != textFieldValue.text) {
+                        undoRedoManager.pushState(textFieldValue.text)
+                        isSaved = false
+                        textFieldValue = TextFieldValue(text = newText)
                     }
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // High-Precision Code Input Area using BasicTextField
-                val codeModifier = if (wordWrap) {
-                    Modifier
-                        .weight(1f)
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                } else {
-                    Modifier
-                        .weight(1f)
-                        .horizontalScroll(horizontalScrollState)
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                }
-
-                BasicTextField(
-                    value = textFieldValue,
-                    onValueChange = { updateText(it) },
-                    readOnly = isReadOnly,
-                    modifier = codeModifier.testTag("text_editor_field"),
-                    textStyle = TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = fontSizeSp.sp,
-                        lineHeight = lineHeight,
-                        color = MaterialTheme.colorScheme.onSurface
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    visualTransformation = CodeSyntaxVisualTransformation(
-                        fileExtension = detectedLanguage,
-                        searchQuery = query,
-                        isCaseSensitive = isCaseSensitive
-                    ),
-                    onTextLayout = { textLayoutResult = it },
-                    decorationBox = { innerTextField ->
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            if (textFieldValue.text.isEmpty()) {
-                                Text(
-                                    text = if (isReadOnly) "Berkas hanya-baca (terkunci)" else "Tulis kode / konten di sini...",
-                                    style = TextStyle(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = fontSizeSp.sp,
-                                        lineHeight = lineHeight,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                    )
-                                )
-                            }
-                            innerTextField()
-                        }
-                    }
-                )
-            }
+                },
+                onCursorMetricsChange = { line, col, selLen ->
+                    nativeCursorMetrics = Triple(line, col, selLen)
+                },
+                onGutterClick = {
+                    showGoToLineDialog = true
+                },
+                editorRef = { view ->
+                    nativeEditorRef = view
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         // --- 4. Bilah Pintasan Cepat (Smart Action Bar & Coding Symbols) ---
@@ -844,19 +704,19 @@ fun CodeEditorScreen(
                             when (sym) {
                                 "Tab" -> {
                                     val updated = EditorOperations.indentOrUnindent(textFieldValue, unindent = false)
-                                    updateText(updated)
+                                    updateText(updated.text)
                                 }
                                 "-Tab" -> {
                                     val updated = EditorOperations.indentOrUnindent(textFieldValue, unindent = true)
-                                    updateText(updated)
+                                    updateText(updated.text)
                                 }
                                 "//" -> {
                                     val updated = EditorOperations.toggleLineComment(textFieldValue, fileExt)
-                                    updateText(updated)
+                                    updateText(updated.text)
                                 }
                                 "Dup" -> {
                                     val updated = EditorOperations.duplicateCurrentLine(textFieldValue)
-                                    updateText(updated)
+                                    updateText(updated.text)
                                 }
                                 else -> insertSymbol(sym)
                             }
@@ -922,14 +782,7 @@ fun CodeEditorScreen(
             initialInput = gotoLineInput,
             onDismiss = { showGoToLineDialog = false },
             onConfirm = { targetLine ->
-                var offset = 0
-                for (i in 0 until (targetLine - 1)) {
-                    offset += lines[i].length + 1
-                }
-                val targetOffset = offset.coerceIn(0, textFieldValue.text.length)
-                textFieldValue = textFieldValue.copy(
-                    selection = TextRange(targetOffset)
-                )
+                nativeEditorRef?.goToLine(targetLine)
                 Toast.makeText(context, "Melompat ke baris $targetLine", Toast.LENGTH_SHORT).show()
                 showGoToLineDialog = false
                 gotoLineInput = ""
