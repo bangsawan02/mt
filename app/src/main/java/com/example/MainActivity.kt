@@ -1,5 +1,6 @@
 package com.example
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 
 import android.Manifest
 import android.content.Intent
@@ -206,7 +207,6 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                     val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                     context.startActivity(intent)
                 }
-                hasPermissions = true
             } else {
                 permissionLauncher.launch(
                     arrayOf(
@@ -216,6 +216,17 @@ fun MainAppScreen(viewModel: EditorViewModel = viewModel()) {
                 )
             }
         }
+    }
+
+    LifecycleResumeEffect(Unit) {
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted && !hasPermissions) viewModel.refreshAll()
+        hasPermissions = granted
+        onPauseOrDispose { }
     }
 
     Scaffold(

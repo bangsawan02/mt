@@ -1,21 +1,38 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Telokuh Manager
 
-# Run and deploy your AI Studio app
+Android file manager with dual panels, archive browsing, APK inspection, media tools, and optional root-assisted operations.
 
-This contains everything you need to run your app locally.
+> Root operations can modify or delete system and application files. Use them only on devices you control and keep a backup.
 
-View your app in AI Studio: https://ai.studio/apps/efc4ac12-e7f4-4a81-be18-1530c6aeba00
+## Requirements
 
-## Run Locally
+- Android Studio with JDK 17
+- Android API level 30 or newer
+- A device/emulator for instrumentation tests
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+## Build
 
+```bash
+bash ./gradlew assembleDebug
+bash ./gradlew testDebugUnitTest lintDebug
+```
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+A release build must be signed with credentials supplied outside the repository:
+
+```bash
+export KEYSTORE_PATH=/secure/path/upload-keystore.jks
+export STORE_PASSWORD='…'
+export KEY_ALIAS='…'
+export KEY_PASSWORD='…'
+bash ./gradlew assembleRelease
+```
+
+The project intentionally does not include signing keys or generated APKs. Never commit either of them.
+
+## Storage and package access
+
+The application uses Android's storage access mechanisms for file management. Full-file access and package visibility are sensitive permissions; users should grant them only when the relevant feature needs them. Where possible, prefer the Storage Access Framework to select a folder instead of granting broad access.
+
+## Contribution checks
+
+Before opening a pull request, run the build checks above. New filesystem, archive, and root-command behavior should include focused unit tests, including hostile file names and malformed archives.

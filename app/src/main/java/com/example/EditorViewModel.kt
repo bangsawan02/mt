@@ -616,7 +616,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     // Fallback ke Root shell hanya jika Java API mengembalikan null (Permission Denied).
                     // Menggunakan perintah tunggal `ls -ap` untuk mendapatkan status folder secara instan 
                     // tanpa perlu mengeksekusi shell berulang-ulang untuk setiap item.
-                    val res = RootUtils.executeCommand("ls -ap \"$path\"", true)
+                    val res = RootUtils.executeCommandArgs(listOf("ls", "-ap", "--", path), true)
                     if (res.success && res.output.isNotEmpty()) {
                         val lines = res.output.split("\n")
                         for (line in lines) {
@@ -708,14 +708,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // --- FILE CREATION & DELETION (MT Manager style) ---
     fun createNewFileOrDir(panel: PanelType, name: String, isFolder: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (!isSafeFileName(name)) {
+                _appLogs.value += "\n[Error Buat File/Folder] Nama tidak valid.\n"
+                return@launch
+            }
             val dirPath = if (panel == PanelType.LEFT) _leftPath.value else _rightPath.value
             val target = File(dirPath, name)
             val isRoot = _isRootEnabled.value
 
             try {
                 if (isRoot) {
-                    val cmd = if (isFolder) "mkdir -p \"${target.absolutePath}\"" else "touch \"${target.absolutePath}\""
-                    val res = RootUtils.executeCommand(cmd, true)
+                    val res = RootUtils.executeCommandArgs(
+                        if (isFolder) listOf("mkdir", "-p", "--", target.absolutePath) else listOf("touch", "--", target.absolutePath),
+                        true
+                    )
                     if (!res.success) {
                         _appLogs.value += "\n[Error Buat File/Folder] ${res.error}\n"
                     }
@@ -739,7 +745,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun renameFileItem(panel: PanelType, item: FileItem, newName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val trimmedName = newName.trim()
-            if (trimmedName.isEmpty() || trimmedName == item.name) return@launch
+            if (!isSafeFileName(trimmedName) || trimmedName == item.name) return@launch
             val oldFile = File(item.path)
             val parentDir = oldFile.parentFile ?: return@launch
             val newFile = File(parentDir, trimmedName)
@@ -747,7 +753,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
             try {
                 if (isRoot) {
-                    val res = RootUtils.executeCommand("mv \"${oldFile.absolutePath}\" \"${newFile.absolutePath}\"", true)
+                    val res = RootUtils.executeCommandArgs(listOf("mv", "--", oldFile.absolutePath, newFile.absolutePath), true)
                     if (!res.success) {
                         _appLogs.value += "\n[Error Ubah Nama] ${res.error}\n"
                     }
@@ -877,7 +883,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     if (file.canRead()) {
                         content = file.readText(Charsets.UTF_8)
                     } else if (_isRootEnabled.value) {
-                        val res = RootUtils.executeCommand("cat \"$filePath\"", true)
+                        val res = RootUtils.executeCommandArgs(listOf("cat", "--", filePath), true)
                         content = res.output
                     } else {
                         content = file.readText(Charsets.UTF_8)
@@ -919,7 +925,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     java.io.BufferedWriter(java.io.OutputStreamWriter(java.io.FileOutputStream(tempFile), Charsets.UTF_8), 8192).use { writer ->
                         writer.write(content)
                     }
-                    val res = RootUtils.executeCommand("cp \"${tempFile.absolutePath}\" \"$filePath\" && chmod 666 \"$filePath\"", true)
+                    val copyResult = RootUtils.executeCommandArgs(listOf("cp", "--", tempFile.absolutePath, filePath), true)
+                    val res = if (copyResult.success) RootUtils.executeCommandArgs(listOf("chmod", "666", "--", filePath), true) else copyResult
                     tempFile.delete()
                     if (res.exitCode != 0) {
                         success = false
@@ -960,8 +967,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val isRoot = _isRootEnabled.value
-                val textA = if (isRoot) RootUtils.executeCommand("cat \"$fileAPath\"", true).output else File(fileAPath).readText()
-                val textB = if (isRoot) RootUtils.executeCommand("cat \"$fileBPath\"", true).output else File(fileBPath).readText()
+                val textA = if (isRoot) RootUtils.executeCommandArgs(listOf("cat", "--", fileAPath), true).output else File(fileAPath).readText()
+                val textB = if (isRoot) RootUtils.executeCommandArgs(listOf("cat", "--", fileBPath), true).output else File(fileBPath).readText()
 
                 val linesA = textA.split("\n")
                 val linesB = textB.split("\n")
@@ -1458,6 +1465,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearTerminalLogs() {
         _terminalLogs.value = ""
+    }
+
+    private fun isSafeFileName(name: String): Boolean {
+        val trimmed = name.trim()
+        return trimmed.isNotEmpty() && trimmed != "." && trimmed != ".." &&
+            '/' !in trimmed && '\\' !in trimmed && '\u0000' !in trimmed
     }
 
     // Archive Viewer & Extractor Methods
