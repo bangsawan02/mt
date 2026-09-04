@@ -28,15 +28,16 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val keystorePath = System.getenv("KEYSTORE_PATH") ?: ""
       val keystoreFile = file(keystorePath)
-      if (keystoreFile.exists()) {
+      if (keystorePath.isNotBlank() && keystoreFile.exists()) {
+        val storePasswordValue = requireNotNull(System.getenv("STORE_PASSWORD")) { "STORE_PASSWORD is required for release signing" }
+        val keyAliasValue = requireNotNull(System.getenv("KEY_ALIAS")) { "KEY_ALIAS is required for release signing" }
+        val keyPasswordValue = requireNotNull(System.getenv("KEY_PASSWORD")) { "KEY_PASSWORD is required for release signing" }
         storeFile = keystoreFile
-        storePassword = System.getenv("STORE_PASSWORD") ?: "android"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "android"
-      } else {
-        initWith(getByName("debug"))
+        storePassword = storePasswordValue
+        keyAlias = keyAliasValue
+        keyPassword = keyPasswordValue
       }
     }
     create("debugConfig") {
@@ -58,7 +59,7 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("debugConfig")
+      signingConfig = signingConfigs.getByName("release")
     }
     debug {
       isMinifyEnabled = false
@@ -133,4 +134,8 @@ dependencies {
 
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
+  testImplementation(libs.androidx.compose.ui.test.junit4)
+  testImplementation(libs.androidx.core)
+  testImplementation(libs.robolectric)
+  testImplementation(libs.androidx.junit)
 }

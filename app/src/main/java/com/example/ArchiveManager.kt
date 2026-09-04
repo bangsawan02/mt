@@ -37,6 +37,10 @@ data class ArchiveProgressState(
 object ArchiveManager {
 
     private const val BUFFER_SIZE = 32 * 1024 // 32 KB buffer
+    private const val MAX_ARCHIVE_ENTRIES = 10_000
+    private const val MAX_ENTRY_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
+    private const val MAX_TOTAL_UNCOMPRESSED_BYTES = 2L * 1024L * 1024L * 1024L
+    private const val MAX_COMPRESSION_RATIO = 1000L
 
     fun isArchiveFile(fileName: String): Boolean {
         val lower = fileName.lowercase()
@@ -326,6 +330,9 @@ object ArchiveManager {
     ): Pair<Boolean, String> {
         ZipFile(archiveFile).use { zip ->
             val allEntries = zip.entries().toList()
+            if (allEntries.size > MAX_ARCHIVE_ENTRIES) {
+                return Pair(false, "Arsip memiliki terlalu banyak entri (maksimum $MAX_ARCHIVE_ENTRIES).")
+            }
             val filteredEntries = if (entriesToExtract != null && entriesToExtract.isNotEmpty()) {
                 allEntries.filter { entry ->
                     entriesToExtract.any { target ->
@@ -340,6 +347,7 @@ object ArchiveManager {
             var currentCount = 0
 
             val buffer = ByteArray(BUFFER_SIZE)
+            var extractedBytes = 0L
 
             for (entry in filteredEntries) {
                 if (isCancelled()) {
@@ -357,6 +365,12 @@ object ArchiveManager {
                     // Berbahaya: Melewati direktori dasar
                     continue
                 }
+                if (!entry.isDirectory && entry.size > MAX_ENTRY_UNCOMPRESSED_BYTES) {
+                    return Pair(false, "Entri ${entry.name} melebihi batas ukuran ekstraksi.")
+                }
+                if (!entry.isDirectory && entry.size > 0 && entry.compressedSize > 0 && entry.size / entry.compressedSize > MAX_COMPRESSION_RATIO) {
+                    return Pair(false, "Rasio kompresi entri ${entry.name} terlalu tinggi.")
+                }
 
                 if (entry.isDirectory) {
                     canonicalOutputFile.mkdirs()
@@ -368,6 +382,10 @@ object ArchiveManager {
                             while (inStream.read(buffer).also { len = it } > 0) {
                                 if (isCancelled()) {
                                     return Pair(false, "Proses ekstraksi dibatalkan.")
+                                }
+                                extractedBytes += len
+                                if (extractedBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                                    return Pair(false, "Ukuran hasil ekstraksi melebihi batas aman.")
                                 }
                                 outStream.write(buffer, 0, len)
                             }

@@ -18,9 +18,8 @@ object FileManager {
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
             progressFlow.value = null
-            return@withContext RootUtils.executeCommand(
-                "cp -rf \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"",
-                runAsRoot = true
+            return@withContext RootUtils.executeCommandArgs(
+                listOf("cp", "-rf", "--", source.absolutePath, targetDir.absolutePath), true
             )
         } else {
             try {
@@ -84,9 +83,8 @@ object FileManager {
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
             progressFlow.value = null
-            return@withContext RootUtils.executeCommand(
-                "mv -f \"${source.absolutePath}\" \"${targetDir.absolutePath}/\"",
-                runAsRoot = true
+            return@withContext RootUtils.executeCommandArgs(
+                listOf("mv", "-f", "--", source.absolutePath, targetDir.absolutePath), true
             )
         } else {
             try {
@@ -112,10 +110,7 @@ object FileManager {
     ): CommandResult = withContext(Dispatchers.IO) {
         if (isRoot) {
             progressFlow.value = null
-            return@withContext RootUtils.executeCommand(
-                "rm -rf \"${target.absolutePath}\"",
-                runAsRoot = true
-            )
+            return@withContext RootUtils.executeCommandArgs(listOf("rm", "-rf", "--", target.absolutePath), true)
         } else {
             try {
                 progressFlow.value = null
@@ -127,4 +122,3 @@ object FileManager {
         }
     }
 }
-
